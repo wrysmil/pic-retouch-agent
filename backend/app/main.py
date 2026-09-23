@@ -2,13 +2,14 @@ from fastapi import APIRouter, FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
-from app.routers import health
+from app.routers import auth, health
 
 settings = get_settings()
 
 app = FastAPI(title="AI 修图智能体", docs_url="/api/docs", openapi_url="/api/openapi.json")
 
 api = APIRouter(prefix="/api")
+api.include_router(auth.router)
 api.include_router(health.router)
 app.include_router(api)
 
