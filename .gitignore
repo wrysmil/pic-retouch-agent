@@ -24,6 +24,9 @@ dist/
 .data/
 *.log
 
+# 文档抓取缓存
+.cache/
+
 # 系统与编辑器
 .DS_Store
 .idea/
