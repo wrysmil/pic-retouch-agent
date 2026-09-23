@@ -7,6 +7,23 @@ export class ApiError extends Error {
   }
 }
 
+function formatDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    // FastAPI 校验错误：每项含 msg 字段；多个错误用「；」拼接
+    return detail
+      .map((item) => {
+        if (item && typeof item === 'object' && 'msg' in item) {
+          return String((item as { msg: unknown }).msg)
+        }
+        return JSON.stringify(item)
+      })
+      .join('；')
+  }
+  if (detail && typeof detail === 'object') return JSON.stringify(detail)
+  return ''
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...init,
@@ -14,8 +31,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
 
   if (!response.ok) {
-    const detail = await response.json().catch(() => null)
-    throw new ApiError(response.status, detail?.detail ?? response.statusText)
+    const body = await response.json().catch(() => null)
+    const message = formatDetail(body?.detail) || response.statusText || '请求失败'
+    throw new ApiError(response.status, message)
   }
   return response.status === 204 ? (undefined as T) : response.json()
 }
