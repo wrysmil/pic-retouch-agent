@@ -12,6 +12,7 @@ from app.routers import assets, auth, health
 settings = get_settings()
 
 
+# FastAPI 利用这个，把"你的启动逻辑"和"你的关闭逻辑"拆到了暂停点的两边
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await asyncio.to_thread(storage.ensure_bucket)
