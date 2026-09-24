@@ -1,6 +1,7 @@
 """模型包。新增模型后需在此导出，供 Alembic autogenerate 发现。"""
 
 from app.models.asset import Asset, AssetKind, AssetSource
+from app.models.tool_run import ToolRun
 from app.models.user import User
 
-__all__ = ["Asset", "AssetKind", "AssetSource", "User"]
+__all__ = ["Asset", "AssetKind", "AssetSource", "ToolRun", "User"]

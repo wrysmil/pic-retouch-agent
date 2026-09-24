@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     image_provider: str = "mock"
     # 阿里云百炼 DashScope API Key
     dashscope_api_key: str = ""
+    # 可改为业务空间专属域名 https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com
+    dashscope_base_url: str = "https://dashscope.aliyuncs.com"
     # 文生图模型名
     text_to_image_model: str = "qwen-image-3.0-pro"
     # 图生图（图像编辑）模型名
