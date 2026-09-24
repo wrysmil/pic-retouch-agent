@@ -78,7 +78,7 @@ async def test_assets_are_isolated_per_user(client: httpx.AsyncClient, credentia
 
     await client.post("/api/auth/logout")
     await client.post(
-        "/api/auth/register", json={"username": "otheruser", "password": "secret123"}
+        "/api/auth/register", json={"username": "test_otheruser", "password": "secret123"}
     )
 
     assert (await client.get(f"/api/assets/{asset_id}")).status_code == 404
