@@ -12,6 +12,8 @@ export type Run = {
   progress: number
   stage: string
   error: string | null
+  prompt: string | null
+  session_id: string | null
   candidates: Asset[]
 }
 
