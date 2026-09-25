@@ -12,15 +12,35 @@ MAX_WALL_ASSETS = 12
 
 
 class SessionCreateIn(BaseModel):
-    current_asset_id: uuid.UUID
-    # 同批未采用的候选一并进图片墙
-    asset_ids: Annotated[list[uuid.UUID], Field(max_length=MAX_WALL_ASSETS)] = []
-    title: str | None = None
+    """创建编辑会话的请求参数。"""
+
+    current_asset_id: uuid.UUID = Field(
+        description="当前正在编辑的素材 ID",
+    )
+    asset_ids: Annotated[
+        list[uuid.UUID],
+        Field(
+            max_length=MAX_WALL_ASSETS,
+            description=f"图墙素材 ID 列表，最多 {MAX_WALL_ASSETS} 张，包含当前编辑的素材及同批候选图",
+        ),
+    ] = []
+    title: str | None = Field(
+        default=None,
+        description="会话标题，不指定则自动生成",
+    )
 
 
 class SessionPatchIn(BaseModel):
-    title: str | None = None
-    current_asset_id: uuid.UUID | None = None
+    """修改编辑会话的请求参数。"""
+
+    title: str | None = Field(
+        default=None,
+        description="新的会话标题",
+    )
+    current_asset_id: uuid.UUID | None = Field(
+        default=None,
+        description="新的当前编辑素材 ID，用于切换当前正在编辑的图片",
+    )
 
 
 class SessionOut(BaseModel):

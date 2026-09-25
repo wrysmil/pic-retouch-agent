@@ -12,12 +12,43 @@ MAX_REFERENCES = 3
 
 
 class GenerateIn(BaseModel):
-    prompt: Annotated[str, Field(min_length=1, max_length=MAX_PROMPT)]
-    ratio: Ratio = Ratio.SQUARE
-    count: Annotated[int, Field(ge=1, le=6)] = 4
-    negative_prompt: Annotated[str | None, Field(max_length=MAX_PROMPT)] = None
-    seed: Annotated[int | None, Field(ge=0, le=2147483647)] = None
-    reference_asset_ids: Annotated[list[uuid.UUID], Field(max_length=MAX_REFERENCES)] = []
+    """文生图请求参数。"""
+
+    prompt: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=MAX_PROMPT,
+            description="图片描述文本，用于指导模型生成图片的内容",
+        ),
+    ]
+    ratio: Ratio = Field(
+        default=Ratio.SQUARE,
+        description="生成图片的宽高比例，如 '1:1'（正方形）、'16:9'（横向）、'9:16'（竖向）",
+    )
+    count: Annotated[int, Field(ge=1, le=6, description="生成图片数量，1-6 张")] = 4
+    negative_prompt: Annotated[
+        str | None,
+        Field(
+            max_length=MAX_PROMPT,
+            description="负面提示词，描述不希望出现在图片中的元素",
+        ),
+    ] = None
+    seed: Annotated[
+        int | None,
+        Field(
+            ge=0,
+            le=2147483647,
+            description="随机种子，相同种子可复现相似结果，不指定则随机生成",
+        ),
+    ] = None
+    reference_asset_ids: Annotated[
+        list[uuid.UUID],
+        Field(
+            max_length=MAX_REFERENCES,
+            description="参考图片 ID 列表，最多 3 张，用于风格/内容参考",
+        ),
+    ] = []
 
     @field_validator("prompt")
     @classmethod
