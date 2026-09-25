@@ -3,6 +3,7 @@ name: ai-retouch-agent
 services:
   postgres:
     image: postgres:17-alpine
+    pull_policy: if_not_present
     restart: unless-stopped
     ports:
       - "7311:5432"
@@ -20,6 +21,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    pull_policy: if_not_present
     restart: unless-stopped
     ports:
       - "7312:6379"
@@ -32,7 +34,9 @@ services:
       retries: 10
 
   minio:
-    image: quay.io/minio/minio:latest
+    # MinIO 官方源常超时；DaoCloud 镜像已在本机时可秒启，勿 docker compose pull
+    image: docker.m.daocloud.io/minio/minio:RELEASE.2024-12-18T13-15-44Z
+    pull_policy: if_not_present
     restart: unless-stopped
     command: server /data --console-address ":9001"
     ports:
