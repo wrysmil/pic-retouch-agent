@@ -1,7 +1,7 @@
 """
 编辑会话服务层。
 
-提供会话的创建、查询、修改和历史记录功能。
+提供会话的创建、查询、修改、历史记录与线性撤销/重做功能。
 会话包含当前编辑的素材（图墙）和编辑历史。
 """
 
@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.layers import document_of
+from app.layers import LayerDocument, document_of
 from app.models import Asset, EditHistory, EditSession, SessionAsset
 from app.models.edit_history import HISTORY_LIMIT
 
@@ -27,6 +27,18 @@ class SessionNotFound(Exception):
     pass
 
 
+class CannotUndo(Exception):
+    """没有可撤销的操作"""
+
+    pass
+
+
+class CannotRedo(Exception):
+    """没有可重做的操作"""
+
+    pass
+
+
 def normalize_title(text: str | None) -> str:
     """
     规范化会话标题。
@@ -36,6 +48,15 @@ def normalize_title(text: str | None) -> str:
     """
     cleaned = " ".join((text or "").split())
     return cleaned[:TITLE_LIMIT] or DEFAULT_TITLE
+
+
+def snapshot(record: EditSession) -> dict:
+    """当前画布状态快照，供撤销回退与重做回放。"""
+    return {
+        "document": record.document,
+        "current_asset_id": str(record.current_asset_id),
+        "revision": record.revision,
+    }
 
 
 async def _next_position(session: AsyncSession, session_id: uuid.UUID) -> int:
@@ -70,23 +91,37 @@ async def _attach(session: AsyncSession, record: EditSession, assets: Iterable[A
         position += 1
 
 
+async def _entry(session: AsyncSession, record: EditSession, seq: int) -> EditHistory | None:
+    """按序号取编辑历史条目。"""
+    return await session.scalar(
+        select(EditHistory).where(EditHistory.session_id == record.id, EditHistory.seq == seq)
+    )
+
+
+async def _max_seq(session: AsyncSession, record: EditSession) -> int:
+    """会话历史的最高序号，用于判断是否还有重做分支。"""
+    return (
+        await session.scalar(
+            select(func.max(EditHistory.seq)).where(EditHistory.session_id == record.id)
+        )
+        or 0
+    )
+
+
 async def _append_history(
     session: AsyncSession, record: EditSession, action: str, params: dict, result: dict
-) -> None:
+) -> int:
     """
-    内部方法：追加编辑历史。
+    内部方法：追加编辑历史。seq 由会话的 history_seq 游标推进，并清理超出限制的旧记录。
 
     - **session**: 数据库会话
     - **record**: 会话记录
     - **action**: 操作类型（如 "create_session"、"switch_current"）
-    - **params**: 操作参数
-    - **result**: 操作结果
-    - **效果**: 创建历史记录，自动清理超出限制的旧记录
+    - **params**: 操作参数（含编辑前的快照 before）
+    - **result**: 操作结果（含编辑后的快照 document/current_asset_id/revision）
+    - **返回**: 新条目的 seq
     """
-    last = await session.scalar(
-        select(func.max(EditHistory.seq)).where(EditHistory.session_id == record.id)
-    )
-    seq = (last or 0) + 1
+    seq = record.history_seq + 1
     session.add(
         EditHistory(
             user_id=record.user_id,
@@ -102,6 +137,80 @@ async def _append_history(
             EditHistory.session_id == record.id, EditHistory.seq <= seq - HISTORY_LIMIT
         )
     )
+    return seq
+
+
+def _restore(record: EditSession, state: dict) -> None:
+    """把会话恢复到某个快照。"""
+    record.document = state["document"]
+    record.current_asset_id = uuid.UUID(state["current_asset_id"])
+    record.revision = state["revision"]
+
+
+async def apply_edit(
+    session: AsyncSession,
+    record: EditSession,
+    action: str,
+    *,
+    params: dict | None = None,
+    document: LayerDocument | None = None,
+    current: Asset | None = None,
+    extra_assets: Iterable[Asset] = (),
+    result: dict | None = None,
+    bump_revision: bool = True,
+) -> EditSession:
+    """
+    应用一次可撤销编辑：截断重做分支，改画布状态，写入历史快照。
+
+    - **session**: 数据库会话
+    - **record**: 会话记录
+    - **action**: 操作类型（工具名或内部动作）
+    - **params**: 操作参数
+    - **document**: 新的画布文档（可选）
+    - **current**: 新的当前素材（可选，切换图片墙时用）
+    - **extra_assets**: 额外关联进图片墙的素材（可选）
+    - **result**: 操作结果（合并进历史条目的 result）
+    - **bump_revision**: 是否递增修订号（工具产出不改当前图时不递增）
+    - **返回**: 更新后的会话记录
+    """
+    before = snapshot(record)
+    await session.execute(
+        delete(EditHistory).where(
+            EditHistory.session_id == record.id, EditHistory.seq > record.history_seq
+        )
+    )
+
+    changed = False
+    if current is not None and current.id != record.current_asset_id:
+        record.current_asset_id = current.id
+        if document is None:
+            document = document_of(current)
+        changed = True
+    if document is not None:
+        payload = document.model_dump(mode="json")
+        if payload != record.document:
+            record.document = payload
+            changed = True
+
+    if bump_revision and changed:
+        record.revision += 1
+
+    await _attach(session, record, extra_assets)
+    record.history_seq = await _append_history(
+        session,
+        record,
+        action,
+        {**(params or {}), "before": before},
+        {
+            **(result or {}),
+            "document": record.document,
+            "current_asset_id": str(record.current_asset_id),
+            "revision": record.revision,
+        },
+    )
+    await session.commit()
+    await session.refresh(record)
+    return record
 
 
 async def create(
@@ -127,12 +236,19 @@ async def create(
         original_asset_id=current.id,
         current_asset_id=current.id,
         document=document_of(current).model_dump(mode="json"),
+        history_seq=0,
     )
     session.add(record)
     await session.flush()
 
     await _attach(session, record, [current, *wall])
-    await _append_history(session, record, "create_session", {}, {"asset_id": str(current.id)})
+    record.history_seq = await _append_history(
+        session,
+        record,
+        "create_session",
+        {},
+        {"asset_id": str(current.id), **snapshot(record)},
+    )
     await session.commit()
     await session.refresh(record)
     return record
@@ -226,16 +342,19 @@ async def history_of(session: AsyncSession, record: EditSession) -> list[EditHis
     return list(result)
 
 
-async def attach(session: AsyncSession, record: EditSession, assets: Iterable[Asset]) -> None:
-    """
-    将素材关联到会话。
+async def undo_state(session: AsyncSession, record: EditSession) -> tuple[bool, bool]:
+    """返回 (can_undo, can_redo)。"""
+    return record.history_seq > 1, await _max_seq(session, record) > record.history_seq
 
-    - **session**: 数据库会话
-    - **record**: 会话记录
-    - **assets**: 要关联的素材列表
-    """
-    await _attach(session, record, assets)
-    await session.commit()
+
+async def previous_document(session: AsyncSession, record: EditSession) -> LayerDocument | None:
+    """本轮操作前的画布，供前后对比。"""
+    if record.history_seq <= 1:
+        return None
+    entry = await _entry(session, record, record.history_seq)
+    before = (entry.params if entry else {}).get("before") or {}
+    raw = before.get("document")
+    return LayerDocument.model_validate(raw) if raw else None
 
 
 async def record_result(
@@ -245,7 +364,7 @@ async def record_result(
     action: str,
     params: dict,
     result: dict,
-) -> None:
+) -> EditSession:
     """
     工具产出并入图片墙并留下编辑记录。不改当前图，采用与否交给用户。
 
@@ -256,9 +375,15 @@ async def record_result(
     - **params**: 工具参数
     - **result**: 工具结果
     """
-    await _attach(session, record, assets)
-    await _append_history(session, record, action, params, result)
-    await session.commit()
+    return await apply_edit(
+        session,
+        record,
+        action,
+        params=params,
+        extra_assets=assets,
+        result=result,
+        bump_revision=False,
+    )
 
 
 async def rename(session: AsyncSession, record: EditSession, title: str) -> EditSession:
@@ -284,20 +409,49 @@ async def switch_current(session: AsyncSession, record: EditSession, asset: Asse
     - **record**: 会话记录
     - **asset**: 新的当前素材
     - **返回**: 更新后的会话记录
-    - **效果**: 更新 current_asset_id，递增 revision，重置 document，记录历史
+    - **效果**: 更新 current_asset_id，递增 revision，重置 document，记录一条可撤销历史
     """
-    if record.current_asset_id != asset.id:
-        record.current_asset_id = asset.id
-        record.revision += 1
-        record.document = document_of(asset).model_dump(mode="json")
-        await _attach(session, record, [asset])
-        await _append_history(
-            session,
-            record,
-            "switch_current",
-            {"asset_id": str(asset.id)},
-            {"revision": record.revision},
-        )
+    if record.current_asset_id == asset.id:
+        return record
+    return await apply_edit(session, record, "switch_current", current=asset, extra_assets=[asset])
+
+
+async def undo(session: AsyncSession, record: EditSession) -> EditSession:
+    """
+    撤销最后一步操作，回退画布状态。
+
+    - **session**: 数据库会话
+    - **record**: 会话记录
+    - **返回**: 回退后的会话记录
+    - **抛出**: CannotUndo 没有可撤销的操作
+    """
+    if record.history_seq <= 1:
+        raise CannotUndo
+    entry = await _entry(session, record, record.history_seq)
+    before = (entry.params if entry else {}).get("before")
+    if not before:
+        raise CannotUndo
+    _restore(record, before)
+    record.history_seq -= 1
+    await session.commit()
+    await session.refresh(record)
+    return record
+
+
+async def redo(session: AsyncSession, record: EditSession) -> EditSession:
+    """
+    重做被撤销的操作，回放画布状态。
+
+    - **session**: 数据库会话
+    - **record**: 会话记录
+    - **返回**: 重做后的会话记录
+    - **抛出**: CannotRedo 没有可重做的操作
+    """
+    entry = await _entry(session, record, record.history_seq + 1)
+    if entry is None or "document" not in entry.result:
+        raise CannotRedo
+    _restore(record, entry.result)
+    record.history_seq += 1
     await session.commit()
     await session.refresh(record)
     return record

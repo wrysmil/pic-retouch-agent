@@ -23,3 +23,9 @@ DELIVERY_RATIOS = (Ratio.SQUARE, Ratio.PORTRAIT_4_5, Ratio.VERTICAL_9_16)
 
 def size_of(ratio: Ratio) -> tuple[int, int]:
     return SIZES[ratio]
+
+
+def parts_of(ratio: Ratio) -> tuple[int, int]:
+    """把 "1:1" 拆成 (1, 1)，供裁剪工具计算目标画幅。"""
+    left, right = ratio.value.split(":")
+    return int(left), int(right)

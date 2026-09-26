@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from app.layers import LayerDocument
 from app.models import EditHistory, EditSession
 from app.schemas.asset import AssetOut
+from app.schemas.run import RunOut
 
 MAX_WALL_ASSETS = 12
 
@@ -43,10 +44,18 @@ class SessionPatchIn(BaseModel):
     )
 
 
+class ToolInvokeIn(BaseModel):
+    """直接调用一个已注册工具的请求参数。"""
+
+    tool: str = Field(description="工具名，必须已在工具注册表中登记")
+    params: dict = Field(default_factory=dict, description="工具参数，按工具各自的模型校验")
+
+
 class SessionOut(BaseModel):
     id: uuid.UUID
     title: str
     revision: int
+    history_seq: int
     original_asset_id: uuid.UUID
     current_asset_id: uuid.UUID
     created_at: datetime
@@ -58,6 +67,7 @@ class SessionOut(BaseModel):
             id=record.id,
             title=record.title,
             revision=record.revision,
+            history_seq=record.history_seq,
             original_asset_id=record.original_asset_id,
             current_asset_id=record.current_asset_id,
             created_at=record.created_at,
@@ -67,15 +77,36 @@ class SessionOut(BaseModel):
 
 class SessionDetailOut(SessionOut):
     document: LayerDocument
+    previous_document: LayerDocument | None = None
     assets: list[AssetOut] = []
+    can_undo: bool = False
+    can_redo: bool = False
 
     @classmethod
-    def of_detail(cls, record: EditSession, assets: list[AssetOut]) -> "SessionDetailOut":
+    def of_detail(
+        cls,
+        record: EditSession,
+        assets: list[AssetOut],
+        *,
+        previous_document: LayerDocument | None = None,
+        can_undo: bool = False,
+        can_redo: bool = False,
+    ) -> "SessionDetailOut":
         return cls(
             **SessionOut.of(record).model_dump(),
             document=LayerDocument.model_validate(record.document),
+            previous_document=previous_document,
             assets=assets,
+            can_undo=can_undo,
+            can_redo=can_redo,
         )
+
+
+class ToolInvokeOut(BaseModel):
+    """调用工具的响应：执行记录 + 更新后的会话详情。"""
+
+    run: RunOut
+    session: SessionDetailOut
 
 
 class HistoryOut(BaseModel):

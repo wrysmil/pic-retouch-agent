@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     image_edit_model: str = "qwen-image-edit-max"
     # 智能规划（文案/脚本生成）模型名
     planner_model: str = "qwen-plus"
+    # 抠图 provider: auto（有 rembg 用 rembg，否则四角抠图）| rembg | corner（测试强制）
+    matting_provider: str = "auto"
 
     @property
     def is_production(self) -> bool:

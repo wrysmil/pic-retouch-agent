@@ -1,7 +1,7 @@
 """
 编辑会话相关接口。
 
-提供图片编辑会话的创建、查询、修改和历史记录功能。
+提供图片编辑会话的创建、查询、修改、历史记录、工具调用与撤销/重做功能。
 """
 
 import uuid
@@ -15,17 +15,22 @@ from app.deps import CurrentUser
 from app.models import Asset, EditSession, User
 from app.schemas.agent import MessageIn, TurnOut
 from app.schemas.asset import AssetOut
+from app.schemas.run import RunOut
 from app.schemas.session import (
     HistoryOut,
     SessionCreateIn,
     SessionDetailOut,
     SessionOut,
     SessionPatchIn,
+    ToolInvokeIn,
+    ToolInvokeOut,
 )
 from app.services import agent as agent_service
 from app.services import assets as asset_service
-from app.services import sessions
-from app.services.sessions import SessionNotFound
+from app.services import sessions, tools
+from app.services.sessions import CannotRedo, CannotUndo, SessionNotFound
+from app.services.tools import InvalidParams
+from app.tools import UnknownTool
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -47,9 +52,16 @@ async def _load(session: AsyncSession, user: User, session_id: uuid.UUID) -> Edi
 
 
 async def _detail(session: AsyncSession, record: EditSession) -> SessionDetailOut:
-    """构建会话详情响应（含图墙）。"""
+    """构建会话详情响应（含图墙、撤销/重做状态与前后对比画布）。"""
     wall = await sessions.assets_of(session, record)
-    return SessionDetailOut.of_detail(record, [AssetOut.of(asset) for asset in wall])
+    can_undo, can_redo = await sessions.undo_state(session, record)
+    return SessionDetailOut.of_detail(
+        record,
+        [AssetOut.of(asset) for asset in wall],
+        previous_document=await sessions.previous_document(session, record),
+        can_undo=can_undo,
+        can_redo=can_redo,
+    )
 
 
 @router.post(
@@ -110,7 +122,7 @@ async def list_sessions(
 @router.get(
     "/{session_id}",
     summary="获取会话详情",
-    description="获取指定会话的详细信息，包括图墙和当前素材。",
+    description="获取指定会话的详细信息，包括图墙、画布文档与撤销/重做状态。",
 )
 async def get_session(
     session_id: uuid.UUID,
@@ -122,9 +134,10 @@ async def get_session(
 
     - **session_id**: 会话 UUID
     - **返回**: 会话详细信息，包含：
-      - 基本信息（ID、标题、创建/更新时间）
-      - 当前素材
-      - 图墙素材列表
+      - 基本信息（ID、标题、创建/更新时间、history_seq）
+      - 画布文档与上一版画布（前后对比）
+      - 当前素材、图墙素材列表
+      - 撤销/重做可用状态
 
     **可能错误**:
     - 404: 会话不存在
@@ -166,6 +179,96 @@ async def patch_session(
         asset = await _asset(session, user, payload.current_asset_id)
         record = await sessions.switch_current(session, record, asset)
 
+    return await _detail(session, record)
+
+
+@router.post(
+    "/{session_id}/tools",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="调用修图工具",
+    description="在会话内直接调用一个已注册工具。画布工具当场执行，像素工具入队异步执行。",
+)
+async def invoke_tool(
+    session_id: uuid.UUID,
+    payload: ToolInvokeIn,
+    user: CurrentUser,
+    session: SessionDep,
+) -> ToolInvokeOut:
+    """
+    调用修图工具。
+
+    **请求参数 (ToolInvokeIn)**:
+    - **tool**: 工具名（必须在注册表中登记）
+    - **params**: 工具参数
+
+    **返回**: 执行记录 + 更新后的会话详情
+
+    **可能错误**:
+    - 404: 工具未注册
+    - 422: 参数校验失败
+    """
+    record = await _load(session, user, session_id)
+    try:
+        run = await tools.submit(session, user.id, payload.tool, payload.params, record.id)
+    except UnknownTool as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except InvalidParams as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    record = await sessions.get_for_user(session, record.id, user.id)
+    return ToolInvokeOut(run=RunOut.of(run), session=await _detail(session, record))
+
+
+@router.post(
+    "/{session_id}/undo",
+    summary="撤销",
+    description="回退会话到上一步画布状态。",
+)
+async def undo_session(
+    session_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+) -> SessionDetailOut:
+    """
+    撤销上一步操作。
+
+    - **session_id**: 会话 UUID
+    - **返回**: 回退后的会话详情
+
+    **可能错误**:
+    - 409: 没有可撤销的操作
+    """
+    record = await _load(session, user, session_id)
+    try:
+        record = await sessions.undo(session, record)
+    except CannotUndo as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, "没有可撤销的操作") from exc
+    return await _detail(session, record)
+
+
+@router.post(
+    "/{session_id}/redo",
+    summary="重做",
+    description="重放被撤销的操作，恢复到上一步之后的画布状态。",
+)
+async def redo_session(
+    session_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+) -> SessionDetailOut:
+    """
+    重做被撤销的操作。
+
+    - **session_id**: 会话 UUID
+    - **返回**: 重做后的会话详情
+
+    **可能错误**:
+    - 409: 没有可重做的操作
+    """
+    record = await _load(session, user, session_id)
+    try:
+        record = await sessions.redo(session, record)
+    except CannotRedo as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, "没有可重做的操作") from exc
     return await _detail(session, record)
 
 

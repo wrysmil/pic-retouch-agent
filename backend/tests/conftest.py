@@ -5,6 +5,7 @@ import pytest
 from httpx import ASGITransport
 from sqlalchemy import delete
 
+from app.config import get_settings
 from app.db import SessionFactory
 from app.main import app
 from app.models import User
@@ -17,6 +18,15 @@ TEST_USER_PREFIX = "test_"
 @pytest.fixture(scope="session", autouse=True)
 def bucket():
     ensure_bucket()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def corner_matting():
+    """测试强制四角抠图，避免 rembg 下载模型拖慢测试。"""
+    settings = get_settings()
+    original, settings.matting_provider = settings.matting_provider, "corner"
+    yield
+    settings.matting_provider = original
 
 
 @pytest.fixture
