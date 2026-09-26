@@ -38,7 +38,13 @@ def snapshot(run: ToolRun) -> dict:
     }
 
 
-async def create(session: AsyncSession, user_id: uuid.UUID, tool: str, params: dict) -> ToolRun:
+async def create(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    tool: str,
+    params: dict,
+    session_id: uuid.UUID | None = None,
+) -> ToolRun:
     """
     创建新任务记录。
 
@@ -46,9 +52,12 @@ async def create(session: AsyncSession, user_id: uuid.UUID, tool: str, params: d
     - **user_id**: 任务归属的用户 ID
     - **tool**: 工具标识（如 "generate_image"）
     - **params**: 任务参数字典
+    - **session_id**: 所属编辑会话（可选，从会话内发起时有值）
     - **返回**: 创建的任务记录
     """
-    run = ToolRun(user_id=user_id, tool=tool, params=params, stage="等待开始")
+    run = ToolRun(
+        user_id=user_id, session_id=session_id, tool=tool, params=params, stage="等待开始"
+    )
     session.add(run)
     await session.commit()
     await session.refresh(run)

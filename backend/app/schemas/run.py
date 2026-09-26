@@ -85,5 +85,6 @@ class RunOut(BaseModel):
             stage=run.stage,
             error=run.error,
             prompt=run.params.get("prompt"),
+            session_id=run.session_id,
             candidates=candidates or [],
         )

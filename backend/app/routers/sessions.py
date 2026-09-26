@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import SessionDep
 from app.deps import CurrentUser
 from app.models import Asset, EditSession, User
+from app.schemas.agent import MessageIn, TurnOut
 from app.schemas.asset import AssetOut
 from app.schemas.session import (
     HistoryOut,
@@ -21,6 +22,7 @@ from app.schemas.session import (
     SessionOut,
     SessionPatchIn,
 )
+from app.services import agent as agent_service
 from app.services import assets as asset_service
 from app.services import sessions
 from app.services.sessions import SessionNotFound
@@ -189,3 +191,51 @@ async def get_history(
     record = await _load(session, user, session_id)
     entries = await sessions.history_of(session, record)
     return [HistoryOut.of(entry) for entry in entries]
+
+
+@router.get(
+    "/{session_id}/messages",
+    summary="获取对话记录",
+    description="获取会话内的自然语言修图指令对话，按时间正序返回。",
+)
+async def list_messages(
+    session_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+) -> list[TurnOut]:
+    """
+    获取会话的对话记录。
+
+    - **session_id**: 会话 UUID
+    - **返回**: 对话轮次列表（按创建时间正序）
+    """
+    record = await _load(session, user, session_id)
+    return [TurnOut.of(turn) for turn in await agent_service.turns_of(session, record)]
+
+
+@router.post(
+    "/{session_id}/messages",
+    status_code=status.HTTP_201_CREATED,
+    summary="发送修图指令",
+    description="用自然语言描述修图意图，由 AI 规划为工具调用并异步执行。",
+)
+async def send_message(
+    session_id: uuid.UUID,
+    payload: MessageIn,
+    user: CurrentUser,
+    session: SessionDep,
+) -> TurnOut:
+    """
+    发送一条自然语言修图指令。
+
+    **请求参数 (MessageIn)**:
+    - **text**: 修图指令文本（必填，1-1000 字符）
+
+    **返回**: 本轮对话（TurnOut），含规划结果与已投递的工具步骤
+
+    - 指令会被规划模型解析为至多一个工具步骤，服务端校验后下发执行
+    - 指令与修图无关时返回一句中文说明，不调用任何工具
+    - 规划模型未配置时明确失败（status=failed），不会伪造成功结果
+    """
+    record = await _load(session, user, session_id)
+    return TurnOut.of(await agent_service.respond(session, record, payload.text))

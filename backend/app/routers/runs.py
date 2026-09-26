@@ -2,42 +2,10 @@
 任务执行相关接口。
 
 提供图片生成任务的创建和查询功能。
-┌──────────────────────────────────────────────────────────────────┐
-│                     完整流程                                      │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  用户请求                                                          │
-│      │                                                            │
-│      ▼                                                            │
-│  ┌─────────────┐     ┌─────────────────┐                        │
-│  │ runs.create │     │ enqueue          │                        │
-│  │ (存数据库)  │     │ (放 Redis 队列)  │                        │
-│  └──────┬──────┘     └────────┬────────┘                        │
-│         │                     │                                 │
-│         │         ┌───────────┴───────────┐                      │
-│         │         │                       │                      │
-│         │         ▼                       ▼                      │
-│         │    返回 run_id 给前端     Worker 从队列取任务          │
-│         │         │                       │                      │
-│         │         │                       ▼                      │
-│         │         │              ┌─────────────────┐            │
-│         │         │              │ 调用 AI 模型生成图片 │       │
-│         │         │              └────────┬─────────┘            │
-│         │         │                       │                      │
-│         │         │                       ▼                      │
-│         │         │              ┌─────────────────┐            │
-│         │         │              │ 更新数据库状态    │            │
-│         │         │              │ (completed)      │            │
-│         │         │              └─────────────────┘            │
-│         │         │                       │                      │
-│         │         ▼                       │                      │
-│         │    前端轮询/ SSE 监听状态变化  ◄┘                       │
-│         │         │                                                │
-│         │         ▼                                                │
-│         │    显示结果给用户                                          │
-│                                                                  │
-└──────────────────────────────────────────────────────────────────┘
 
+文生图作为工具注册表中的第一个工具对外暴露：用户提交参数 →
+tools.submit 校验并入队 → worker 执行统一外壳（tools.execute）→
+状态经 SSE 实时推送 → 候选图转存为素材。
 """
 
 import uuid
@@ -48,12 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import SessionDep
 from app.deps import CurrentUser
 from app.models.tool_run import ToolRun
-from app.queue import enqueue
 from app.schemas.asset import AssetOut
 from app.schemas.run import GenerateIn, RunOut
 from app.services import assets as asset_service
-from app.services import generation, runs
+from app.services import runs, tools
 from app.services.runs import RunNotFound
+from app.tools import GENERATE_IMAGE
 
 router = APIRouter(tags=["runs"])
 
@@ -94,8 +62,8 @@ async def create_generation(
 
     **流程**:
     1. 校验参考图片是否存在
-    2. 创建任务记录（状态为 pending）
-    3. 任务入队异步执行
+    2. 创建任务记录（状态为 queued）
+    3. 任务入队异步执行（统一工具执行外壳）
     4. 返回任务信息
 
     **可能错误**:
@@ -107,11 +75,7 @@ async def create_generation(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "参考图不存在")
 
     params = payload.model_dump(mode="json")
-    # 在数据库中创建一条任务记录
-    run = await runs.create(session, user.id, generation.TOOL, params)
-    # 将任务放到Redis队列
-    await enqueue("generate_images", run.id)
-    # 返回一个runId
+    run = await tools.submit(session, user.id, GENERATE_IMAGE.name, params)
     return RunOut.of(run)
 
 
