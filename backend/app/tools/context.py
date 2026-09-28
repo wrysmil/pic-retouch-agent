@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
-from app.edits.render import flatten
+from app.edits.render import WHITE, flatten
 from app.layers import LayerDocument
 from app.models import EditSession, ToolRun
 from app.services import assets, sessions
@@ -41,7 +41,12 @@ def document_of(record: EditSession) -> LayerDocument:
     return LayerDocument.model_validate(record.document)
 
 
-async def flatten_session(session: AsyncSession, record: EditSession) -> bytes:
+async def flatten_session(
+    session: AsyncSession,
+    record: EditSession,
+    *,
+    background: tuple[int, int, int, int] = WHITE,
+) -> bytes:
     """把多层的画布合成一张 PNG，交给像素工具处理。
 
     画布类工具不用它——只改文档里的数字，不碰像素，所以能毫秒级返回；
@@ -49,6 +54,9 @@ async def flatten_session(session: AsyncSession, record: EditSession) -> bytes:
 
     两步：先按文档收集每层的素材字节，再交给 render.flatten() 从底往上合成。
     文字、形状这类没有 asset_id 的图层，以及取不到素材的层，都直接跳过。
+
+    background 决定画布底色：默认白底，模型看不到透明区域；
+    已经抠出透明背景的图要接着调色时传 TRANSPARENT，否则透明区域会被压成白色。
     """
     document = document_of(record)
     images: dict[uuid.UUID, bytes] = {}
@@ -60,4 +68,4 @@ async def flatten_session(session: AsyncSession, record: EditSession) -> bytes:
         if asset is None:
             continue
         images[asset.id] = await storage.get(asset.storage_key)
-    return flatten(document, images)
+    return flatten(document, images, background=background)
