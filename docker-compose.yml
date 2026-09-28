@@ -34,8 +34,10 @@ services:
       retries: 10
 
   minio:
-    # MinIO 官方源常超时；DaoCloud 镜像已在本机时可秒启，勿 docker compose pull
-    image: docker.m.daocloud.io/minio/minio:RELEASE.2024-12-18T13-15-44Z
+    # 官方源与 DaoCloud 镜像均已无法拉取（quay 401、daocloud 403），本机已有 quay 的
+    # latest 镜像可直用。切勿换成 2025-09 之前的版本：旧版读不了 xl meta v3 格式的卷，
+    # 会陷入启动崩溃循环
+    image: quay.io/minio/minio:latest
     pull_policy: if_not_present
     restart: unless-stopped
     command: server /data --console-address ":9001"
