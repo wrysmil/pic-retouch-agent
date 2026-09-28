@@ -12,10 +12,12 @@ from app.tools.context import flatten_session, require_session
 
 
 class RemoveBackgroundIn(BaseModel):
-    pass
+    """去背景不需要参数，空模型即可让工具出现在注册表里。"""
 
 
 class AdjustIn(BaseModel):
+    """调色参数；除晕影外均为 -1 到 1，默认 0 表示这一项不动。"""
+
     brightness: float = Field(default=0, ge=-1, le=1)
     contrast: float = Field(default=0, ge=-1, le=1)
     highlights: float = Field(default=0, ge=-1, le=1)
@@ -26,27 +28,35 @@ class AdjustIn(BaseModel):
     vibrance: float = Field(default=0, ge=-1, le=1)
     sharpness: float = Field(default=0, ge=-1, le=1)
     clarity: float = Field(default=0, ge=-1, le=1)
+    # 晕影只有加深一档，没有反向，取值 0 到 1
     vignette: float = Field(default=0, ge=0, le=1)
 
 
 async def _adopt(session: AsyncSession, run: ToolRun, data: bytes, kind: AssetKind) -> dict:
+    """把产物存成素材并直接采用，返回的是给执行外壳的约定 key。"""
     asset = await assets.create_from_bytes(session, run.user_id, data, kind, AssetSource.TOOL)
     return {"asset_ids": [str(asset.id)], "adopt_asset_id": str(asset.id)}
 
 
 async def remove_background_exec(session: AsyncSession, run: ToolRun) -> dict:
+    """识别主体并输出透明 PNG：读画布 → 抠图 → 存素材。"""
+
     record = await require_session(session, run)
     await runs.report(session, run, 20, "识别主体")
     data = await flatten_session(session, record)
     await runs.report(session, run, 50, "去除背景")
+    # 纯 CPU 计算，放到线程池，别占着事件循环
     output = await asyncio.to_thread(remove_background, data)
     return await _adopt(session, run, output, AssetKind.SUBJECT)
 
 
 async def adjust_image_exec(session: AsyncSession, run: ToolRun) -> dict:
+    """按参数调整当前画布的色调；未提到的参数保持原样。"""
+
     record = await require_session(session, run)
     await runs.report(session, run, 20, "读取画布")
     data = await flatten_session(session, record)
+    # 只传非 0 的项，与 adjust 内部的 `if brightness:` 一一对应
     params = {key: value for key, value in run.params.items() if value}
     await runs.report(session, run, 60, "调整色彩")
     output = await asyncio.to_thread(lambda: adjust(data, **params))

@@ -10,22 +10,33 @@ from app.ratios import Ratio
 from app.tools.base import ToolSpec
 from app.tools.context import ToolError, document_of, require_session
 
+
+# 画布工具类
+
+# 图层 ID 由服务端从会话上下文填入，模型不需要也不能指定
 _LAYER = "layer_id"
 
 
 class LayerRef(BaseModel):
+    """图层类工具的公共入参，layer_id 为空表示作用于最上层图像。"""
+
     layer_id: str | None = None
 
 
 class FlipIn(LayerRef):
+    """翻转入参，direction 指翻转所在的轴而非旋转方向。"""
+
     direction: Literal["horizontal", "vertical"]
 
 
 class OpacityIn(LayerRef):
+    """透明度入参。"""
+
     opacity: float = Field(ge=0, le=1)
 
 
 class ScaleIn(LayerRef):
+    # 相对倍率与绝对缩放两套字段并存，兼容模型的不同表述
     factor: float | None = Field(default=None, gt=0, le=8)
     scale_x: float | None = Field(default=None, gt=0, le=8)
     scale_y: float | None = Field(default=None, gt=0, le=8)
@@ -38,6 +49,7 @@ class ScaleIn(LayerRef):
 
 
 class RotateIn(LayerRef):
+    # angle 为增量、rotation 为绝对值，两者取其一
     angle: float | None = Field(default=None, ge=-360, le=360)
     rotation: float | None = Field(default=None, ge=-360, le=360)
 
@@ -49,10 +61,14 @@ class RotateIn(LayerRef):
 
 
 class ReorderIn(LayerRef):
+    """层级调整入参，top/bottom 直接置顶置底，up/down 只移动一层。"""
+
     place: Literal["top", "bottom", "up", "down"]
 
 
 class CropRect(BaseModel):
+    """归一化裁剪框，取值 0 到 1，相对画布左上角。"""
+
     x: float = Field(ge=0, le=1)
     y: float = Field(ge=0, le=1)
     width: float = Field(gt=0, le=1)
@@ -60,12 +76,15 @@ class CropRect(BaseModel):
 
     @model_validator(mode="after")
     def _inside(self) -> "CropRect":
+        # 留一点容差，避免 0.3+0.7 这类浮点累加误差被误判为越界
         if self.x + self.width > 1.0001 or self.y + self.height > 1.0001:
             raise ValueError("裁剪框超出画布")
         return self
 
 
 class CropIn(BaseModel):
+    """按比例居中裁剪或按矩形裁剪，二选一。"""
+
     ratio: Ratio | None = None
     rect: CropRect | None = None
 
@@ -77,8 +96,23 @@ class CropIn(BaseModel):
 
 
 async def _apply(session: AsyncSession, run: ToolRun, mutate) -> dict:
+    """画布类工具的统一外壳：取会话文档、执行纯函数变换、回传新文档。
+
+    mutate 只接收文档和已校验的参数，图层不存在或变换非法统一转成 ToolError。
+    """
+
+    # require_session 用 run.session_id 查 edit_sessions 表，返回一条 EditSession 记录。
+    # 这条记录里的 document 字段（edit_session.py:32）就是当前画布长什么样——只有一份!!!，最新的。
     record = await require_session(session, run)
+    # 以上是读画布状态，record 拿到手的是一条数据库记录，里面装着一堆字段（title、revision、history_seq、document……）
     try:
+        '''
+run.params                        ①  {"layer_id": None, "factor": 2.0, ...}
+record.document                   ②  {"width": 1920, "height": 1080, "layers": [...]}
+        ↓ document_of(record)    ③  反序列化：dict → LayerDocument 对象
+        ↓ mutate(doc, params)    ④  传入具体变换逻辑，返回新对象
+
+        '''
         document = mutate(document_of(record), run.params)
     except (LayerMissing, EditError) as exc:
         raise ToolError(str(exc)) from exc
@@ -86,6 +120,8 @@ async def _apply(session: AsyncSession, run: ToolRun, mutate) -> dict:
 
 
 async def flip_layer(session: AsyncSession, run: ToolRun) -> dict:
+    """水平或垂直翻转图层，未指定图层时翻转最上层图像。"""
+
     return await _apply(
         session,
         run,
@@ -94,6 +130,8 @@ async def flip_layer(session: AsyncSession, run: ToolRun) -> dict:
 
 
 async def set_layer_opacity(session: AsyncSession, run: ToolRun) -> dict:
+    """设置图层不透明度，0 为全透明，1 为不透明。"""
+
     return await _apply(
         session,
         run,
@@ -102,6 +140,8 @@ async def set_layer_opacity(session: AsyncSession, run: ToolRun) -> dict:
 
 
 async def scale_layer(session: AsyncSession, run: ToolRun) -> dict:
+    """缩放图层，等比用 factor，独立指定 X/Y 用 scale_x / scale_y。"""
+
     return await _apply(
         session,
         run,
@@ -116,6 +156,8 @@ async def scale_layer(session: AsyncSession, run: ToolRun) -> dict:
 
 
 async def rotate_layer(session: AsyncSession, run: ToolRun) -> dict:
+    """旋转图层，顺时针为正；angle 累加，rotation 直接设为绝对角度。"""
+
     return await _apply(
         session,
         run,
@@ -129,6 +171,8 @@ async def rotate_layer(session: AsyncSession, run: ToolRun) -> dict:
 
 
 async def reorder_layer(session: AsyncSession, run: ToolRun) -> dict:
+    """调整图层叠放次序，置顶、置底、上移一层或下移一层。"""
+
     return await _apply(
         session,
         run,
@@ -137,6 +181,8 @@ async def reorder_layer(session: AsyncSession, run: ToolRun) -> dict:
 
 
 async def crop_canvas(session: AsyncSession, run: ToolRun) -> dict:
+    """裁剪画布；只给 ratio 时按比例居中裁切，给 rect 时按矩形裁切。"""
+
     def mutate(doc, params):
         rect = params.get("rect")
         box = (rect["x"], rect["y"], rect["width"], rect["height"]) if rect else None
@@ -147,18 +193,22 @@ async def crop_canvas(session: AsyncSession, run: ToolRun) -> dict:
 
 
 def _canvas(name: str, label: str, description: str, params, handler) -> ToolSpec:
+    """构造画布类工具：全部同步执行，且必须绑定会话。"""
+
     return ToolSpec(
         name=name,
         label=label,
         description=description,
         params=params,
         handler=handler,
+        # 只改图层文档、不耗算力，无需排队等待
         queued=False,
         session_required=True,
         agent_hidden=(_LAYER,),
     )
 
 
+# 画布类工具清单，供工具注册表收录；description 是给模型看的，不写实现细节
 CROP_CANVAS = _canvas(
     "crop_canvas",
     "裁剪",
