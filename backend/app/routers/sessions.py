@@ -18,6 +18,8 @@ from app.schemas.asset import AssetOut
 from app.schemas.run import RunOut
 from app.schemas.session import (
     HistoryOut,
+    SelectIn,
+    SelectionOut,
     SessionCreateIn,
     SessionDetailOut,
     SessionOut,
@@ -27,7 +29,8 @@ from app.schemas.session import (
 )
 from app.services import agent as agent_service
 from app.services import assets as asset_service
-from app.services import sessions, tools
+from app.services import selections, sessions, tools
+from app.services.selections import EmptySelection, StaleSelection
 from app.services.sessions import CannotRedo, CannotUndo, SessionNotFound
 from app.services.tools import InvalidParams
 from app.tools import UnknownTool
@@ -180,6 +183,95 @@ async def patch_session(
         record = await sessions.switch_current(session, record, asset)
 
     return await _detail(session, record)
+
+
+async def _selection_out(session: AsyncSession, user: User, payload: dict) -> SelectionOut:
+    """构建选区响应：遮罩复用素材结构，带签名 URL 供画布直接取图。"""
+    mask = await _asset(session, user, uuid.UUID(payload["mask_asset_id"]))
+    return SelectionOut(
+        revision=payload["revision"],
+        mask=AssetOut.of(mask),
+        markers=payload.get("markers") or [],
+    )
+
+
+@router.post(
+    "/{session_id}/selection",
+    summary="建立选区",
+    description="用点选标点或笔刷涂抹在当前画布上建立选区，可叠加。",
+)
+async def create_selection(
+    session_id: uuid.UUID, payload: SelectIn, user: CurrentUser, session: SessionDep
+) -> SelectionOut:
+    """
+    建立选区。
+
+    - **revision**: 当前画布修订号，与服务端不一致说明选区已失效（409）
+    - **points**: 归一化点选坐标，`append` 为真时并入已有选区
+    - **strokes**: 笔刷涂抹轨迹，与已有选区自动求并集
+    - **radius**: 笔刷半径，相对画布短边
+
+    **返回**: 选区的遮罩素材与标点列表
+
+    **可能错误**:
+    - 409: 画布已更新，请重新选择
+    - 422: 选区为空
+    """
+    record = await _load(session, user, session_id)
+    try:
+        if payload.points:
+            stored = await selections.select_points(
+                session,
+                record,
+                payload.revision,
+                [(point.x, point.y) for point in payload.points],
+                append=payload.append,
+            )
+        elif payload.strokes:
+            stored = await selections.select_strokes(
+                session,
+                record,
+                payload.revision,
+                [[(point.x, point.y) for point in stroke] for stroke in payload.strokes],
+                payload.radius,
+            )
+        else:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "请点选或涂抹选区")
+    except StaleSelection as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, "画布已更新，请重新选择") from exc
+    except EmptySelection as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "选区为空") from exc
+    return await _selection_out(session, user, stored)
+
+
+@router.get(
+    "/{session_id}/selection",
+    summary="获取当前选区",
+    description="返回当前修订号下的选区；画布已变化导致选区失效时返回 null。",
+)
+async def get_selection(
+    session_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> SelectionOut | None:
+    """获取当前选区，无选区或已失效时返回 null。"""
+    record = await _load(session, user, session_id)
+    stored = await selections.get(record.id, record.revision)
+    if stored is None:
+        return None
+    return await _selection_out(session, user, stored)
+
+
+@router.delete(
+    "/{session_id}/selection",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="清除选区",
+    description="删除当前会话的选区。",
+)
+async def delete_selection(
+    session_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> None:
+    """清除选区。"""
+    record = await _load(session, user, session_id)
+    await selections.clear(record.id)
 
 
 @router.post(

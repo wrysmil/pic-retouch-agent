@@ -51,6 +51,39 @@ class ToolInvokeIn(BaseModel):
     params: dict = Field(default_factory=dict, description="工具参数，按工具各自的模型校验")
 
 
+class PointIn(BaseModel):
+    """画布内的归一化坐标，取值 0 到 1，与视图缩放平移无关。"""
+
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+
+
+class SelectIn(BaseModel):
+    """建立选区：点选与笔刷涂抹二选一。"""
+
+    # 画布一旦变化 revision 就会递增，对不上说明旧选区已失效
+    revision: int
+    points: list[PointIn] = []
+    strokes: list[list[PointIn]] = []
+    radius: float = Field(default=0.03, ge=0.005, le=0.12)
+    # 点选时为真表示把新标点并进已有选区
+    append: bool = False
+
+
+class MarkerOut(BaseModel):
+    """点选标点，编号从 1 起连续。"""
+
+    index: int
+    x: float
+    y: float
+
+
+class SelectionOut(BaseModel):
+    revision: int
+    mask: AssetOut
+    markers: list[MarkerOut] = []
+
+
 class SessionOut(BaseModel):
     id: uuid.UUID
     title: str

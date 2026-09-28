@@ -7,7 +7,7 @@ from app import agent
 from app.layers import LayerDocument
 from app.models import AgentRun, EditSession
 from app.models.tool_run import RunStatus
-from app.services import assets
+from app.services import assets, selections
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,14 @@ async def describe(session: AsyncSession, record: EditSession) -> str:
     if current is not None:
         # 有没有透明通道决定了后续哪些工具可用（比如去背景），所以一并说明
         parts.append(f"当前图 {current.image_format}{'，含透明通道' if current.has_alpha else ''}")
+
+    # 有没有选区决定了局部工具能不能直接调用，模型看不到画布，只能靠这段文字
+    selected = await selections.get(record.id, record.revision)
+    if selected:
+        markers = selected.get("markers") or []
+        parts.append(f"已有选区，{len(markers)} 个标点" if markers else "已有笔刷选区")
+    else:
+        parts.append("当前无选区")
     return "；".join(parts)
 
 
