@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.db import SessionFactory
 from app.main import app
 from app.models import User
+from app.providers import get_image_provider
 from app.storage import ensure_bucket
 
 # 测试账号统一此前缀，清理时只删这些行，避免误清开发库里的真实用户
@@ -18,6 +19,18 @@ TEST_USER_PREFIX = "test_"
 @pytest.fixture(scope="session", autouse=True)
 def bucket():
     ensure_bucket()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def mock_provider():
+    """测试一律走占位图实现，不受本机 IMAGE_PROVIDER 配置影响，也不产生调用费用。"""
+    settings = get_settings()
+    original, settings.image_provider = settings.image_provider, "mock"
+    # get_image_provider 带 lru_cache，改完配置必须清掉，否则仍拿到旧实例
+    get_image_provider.cache_clear()
+    yield
+    settings.image_provider = original
+    get_image_provider.cache_clear()
 
 
 @pytest.fixture(scope="session", autouse=True)
