@@ -58,6 +58,20 @@ async def test_opacity_and_scale_and_rotate(signed_in: httpx.AsyncClient):
     assert layer["transform"]["rotation"] == 15
 
 
+async def test_set_layer_visible_hides_and_shows(signed_in: httpx.AsyncClient):
+    session_id = (await open_session(signed_in))["id"]
+
+    hidden = await invoke(
+        signed_in, session_id, "set_layer_visible", {"layer_id": "base", "visible": False}
+    )
+    assert hidden["session"]["document"]["layers"][0]["visible"] is False
+
+    shown = await invoke(
+        signed_in, session_id, "set_layer_visible", {"layer_id": "base", "visible": True}
+    )
+    assert shown["session"]["document"]["layers"][0]["visible"] is True
+
+
 async def test_undo_restores_previous_document_and_redo_replays(
     signed_in: httpx.AsyncClient,
 ):
@@ -92,6 +106,30 @@ async def test_undo_at_start_is_rejected(signed_in: httpx.AsyncClient):
     response = await signed_in.post(f"/api/sessions/{session_id}/undo")
 
     assert response.status_code == 409
+
+
+async def test_noop_edit_does_not_append_history(signed_in: httpx.AsyncClient):
+    session = await open_session(signed_in)
+
+    body = await invoke(signed_in, session["id"], "set_layer_visible", {"visible": True})
+    entries = (await signed_in.get(f"/api/sessions/{session['id']}/history")).json()
+
+    assert body["session"]["revision"] == 1
+    assert body["session"]["can_undo"] is False
+    assert [entry["action"] for entry in entries] == ["create_session"]
+
+
+async def test_noop_edit_keeps_redo_branch(signed_in: httpx.AsyncClient):
+    session_id = (await open_session(signed_in))["id"]
+    await invoke(signed_in, session_id, "flip_layer", {"direction": "horizontal"})
+    await signed_in.post(f"/api/sessions/{session_id}/undo")
+    await invoke(signed_in, session_id, "set_layer_visible", {"visible": True})
+
+    session = (await signed_in.get(f"/api/sessions/{session_id}")).json()
+    assert session["can_redo"] is True
+
+    redone = (await signed_in.post(f"/api/sessions/{session_id}/redo")).json()
+    assert redone["document"]["layers"][0]["transform"]["scale_x"] == -1
 
 
 async def test_unknown_and_invalid_tools_are_rejected(signed_in: httpx.AsyncClient):
@@ -308,3 +346,123 @@ async def test_replace_region_requires_prompt_and_selection(signed_in: httpx.Asy
     await run_tool({}, uuid.UUID(body["run"]["id"]))
     updated = (await signed_in.get(f"/api/sessions/{session['id']}")).json()
     assert updated["current_asset_id"] != session["current_asset_id"]
+
+
+def _scene(size=(320, 240)) -> bytes:
+    """一张浅底 + 深色主体的图，四角抠图能把主体摘出来。"""
+    from io import BytesIO
+
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", size, (230, 220, 200))
+    ImageDraw.Draw(image).ellipse((80, 40, 240, 200), fill=(30, 90, 180))
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+async def test_split_layers_replaces_base_with_subject_and_background(
+    signed_in: httpx.AsyncClient,
+):
+    session = await open_session(signed_in, image=_scene())
+    body = await invoke(signed_in, session["id"], "split_layers")
+    await run_tool({}, uuid.UUID(body["run"]["id"]))
+    updated = (await signed_in.get(f"/api/sessions/{session['id']}")).json()
+    ids = [layer["id"] for layer in updated["document"]["layers"]]
+
+    assert ids[:2] == ["background", "subject"]
+    assert all(not layer_id.startswith("text-") for layer_id in ids)
+    assert updated["revision"] == 2
+    assert updated["current_asset_id"] == session["current_asset_id"]
+
+    again = await invoke(signed_in, session["id"], "split_layers")
+    await run_tool({}, uuid.UUID(again["run"]["id"]))
+    repeated = (await signed_in.get(f"/api/sessions/{session['id']}")).json()
+    entries = (await signed_in.get(f"/api/sessions/{session['id']}/history")).json()
+
+    assert [layer["id"] for layer in repeated["document"]["layers"]] == ids
+    assert repeated["revision"] == updated["revision"]
+    assert [entry["action"] for entry in entries] == ["split_layers", "create_session"]
+
+
+async def test_promote_object_creates_a_layer_and_is_idempotent(signed_in: httpx.AsyncClient):
+    session = await open_session(signed_in, image=_scene())
+    selected = await _select(
+        signed_in, session["id"], session["revision"], points=[{"x": 0.5, "y": 0.5}]
+    )
+    body = await invoke(
+        signed_in,
+        session["id"],
+        "promote_object_to_layer",
+        {"mask_asset_id": selected["mask"]["id"], "revision": session["revision"]},
+    )
+    await run_tool({}, uuid.UUID(body["run"]["id"]))
+    updated = (await signed_in.get(f"/api/sessions/{session['id']}")).json()
+    ids = [layer["id"] for layer in updated["document"]["layers"]]
+
+    assert ids[0] == "background"
+    assert any(layer_id.startswith("object-") for layer_id in ids)
+    assert (await signed_in.get(f"/api/sessions/{session['id']}/selection")).json() is None
+
+    selected = await _select(
+        signed_in, updated["id"], updated["revision"], points=[{"x": 0.5, "y": 0.5}]
+    )
+    again = await invoke(
+        signed_in,
+        session["id"],
+        "promote_object_to_layer",
+        {"mask_asset_id": selected["mask"]["id"], "revision": updated["revision"]},
+    )
+    await run_tool({}, uuid.UUID(again["run"]["id"]))
+    repeated = (await signed_in.get(f"/api/sessions/{session['id']}")).json()
+    assert len(repeated["document"]["layers"]) == len(updated["document"]["layers"])
+
+
+async def test_move_layer_shifts_position(signed_in: httpx.AsyncClient):
+    session_id = (await open_session(signed_in))["id"]
+
+    body = await invoke(signed_in, session_id, "move_layer", {"dx": 18, "dy": -6})
+
+    transform = body["session"]["document"]["layers"][0]["transform"]
+    assert (transform["x"], transform["y"]) == (18, -6)
+
+
+async def test_replace_background_after_split_keeps_subject(signed_in: httpx.AsyncClient):
+    session = await open_session(signed_in, image=_scene())
+    split = await invoke(signed_in, session["id"], "split_layers")
+    await run_tool({}, uuid.UUID(split["run"]["id"]))
+    before = (await signed_in.get(f"/api/sessions/{session['id']}")).json()
+    subject = next(layer for layer in before["document"]["layers"] if layer["id"] == "subject")
+
+    body = await invoke(signed_in, session["id"], "replace_background", {"prompt": "海边沙滩"})
+    await run_tool({}, uuid.UUID(body["run"]["id"]))
+    after = (await signed_in.get(f"/api/sessions/{session['id']}")).json()
+    layers = {layer["id"]: layer for layer in after["document"]["layers"]}
+
+    assert layers["subject"]["asset_id"] == subject["asset_id"]
+    assert layers["background"]["asset_id"] != subject["asset_id"]
+    assert after["current_asset_id"] == before["current_asset_id"]
+
+
+async def test_adjust_after_split_only_changes_the_target_layer(signed_in: httpx.AsyncClient):
+    session = await open_session(signed_in, image=_scene())
+    split = await invoke(signed_in, session["id"], "split_layers")
+    await run_tool({}, uuid.UUID(split["run"]["id"]))
+    before = (await signed_in.get(f"/api/sessions/{session['id']}")).json()
+    background = next(
+        layer for layer in before["document"]["layers"] if layer["id"] == "background"
+    )
+    subject = next(layer for layer in before["document"]["layers"] if layer["id"] == "subject")
+
+    body = await invoke(
+        signed_in,
+        session["id"],
+        "adjust_image",
+        {"brightness": 0.4, "layer_id": "subject"},
+    )
+    await run_tool({}, uuid.UUID(body["run"]["id"]))
+    after = (await signed_in.get(f"/api/sessions/{session['id']}")).json()
+    layers = {layer["id"]: layer for layer in after["document"]["layers"]}
+
+    assert layers["background"]["asset_id"] == background["asset_id"]
+    assert layers["subject"]["asset_id"] != subject["asset_id"]

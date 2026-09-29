@@ -67,14 +67,15 @@ async def _next_position(session: AsyncSession, session_id: uuid.UUID) -> int:
     return (last or 0) + 1
 
 
-async def _attach(session: AsyncSession, record: EditSession, assets: Iterable[Asset]) -> None:
+async def _attach(session: AsyncSession, record: EditSession, assets: Iterable[Asset]) -> int:
     """
-    内部方法：将素材关联到会话。
+    内部方法：将素材关联到会话，返回新挂上的数量。
 
     - **session**: 数据库会话
     - **record**: 会话记录
     - **assets**: 要关联的素材列表
     - **效果**: 跳过已关联的素材，为新素材创建关联记录
+    - **返回**: 新增关联的数量
     """
     known = set(
         await session.scalars(
@@ -83,12 +84,15 @@ async def _attach(session: AsyncSession, record: EditSession, assets: Iterable[A
     )
     position = await _next_position(session, record.id)
 
+    added = 0
     for asset in assets:
         if asset.id in known:
             continue
         session.add(SessionAsset(session_id=record.id, asset_id=asset.id, position=position))
         known.add(asset.id)
         position += 1
+        added += 1
+    return added
 
 
 async def _entry(session: AsyncSession, record: EditSession, seq: int) -> EditHistory | None:
@@ -174,28 +178,41 @@ async def apply_edit(
     - **返回**: 更新后的会话记录
     """
     before = snapshot(record)
-    await session.execute(
-        delete(EditHistory).where(
-            EditHistory.session_id == record.id, EditHistory.seq > record.history_seq
-        )
-    )
-
+    next_current = record.current_asset_id
+    next_document = record.document
     changed = False
+
     if current is not None and current.id != record.current_asset_id:
-        record.current_asset_id = current.id
+        next_current = current.id
         if document is None:
             document = document_of(current)
         changed = True
     if document is not None:
         payload = document.model_dump(mode="json")
         if payload != record.document:
-            record.document = payload
+            next_document = payload
             changed = True
 
-    if bump_revision and changed:
+    # 素材先挂上去：产出候选图也算发生了事情，只是画布没动
+    added = await _attach(session, record, extra_assets)
+    # 画布没变、也没新素材就是空操作。写一条看不出变化的记录会让撤销回不到任何
+    # 地方，还顺手把用户的重做分支清掉
+    if not changed and not added:
+        await session.commit()
+        await session.refresh(record)
+        return record
+
+    await session.execute(
+        delete(EditHistory).where(
+            EditHistory.session_id == record.id, EditHistory.seq > record.history_seq
+        )
+    )
+
+    record.current_asset_id = next_current
+    record.document = next_document
+    if bump_revision:
         record.revision += 1
 
-    await _attach(session, record, extra_assets)
     record.history_seq = await _append_history(
         session,
         record,
