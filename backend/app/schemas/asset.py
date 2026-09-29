@@ -34,3 +34,13 @@ class AssetOut(BaseModel):
             created_at=asset.created_at,
             url=storage.signed_url(asset.storage_key),
         )
+
+
+class LibraryGroupOut(BaseModel):
+    """创作页素材的一组：session_id 为空表示这组还没归入会话。"""
+
+    session_id: uuid.UUID | None
+    title: str
+    updated_at: datetime
+    cover: AssetOut
+    assets: list[AssetOut]

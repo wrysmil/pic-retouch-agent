@@ -10,7 +10,7 @@ const KIND_LABELS: Record<AssetKind, string> = {
   export: '导出',
 }
 
-/** 会话内全部图片，含未采用的候选。点击切换画布当前图，不覆盖任何已有结果。 */
+/** 会话内全部图片，含未采用的候选。遮罩与拆层中间产物由图层面板承载，不上墙。 */
 export default function ImageWall({
   assets,
   currentId,
@@ -25,37 +25,43 @@ export default function ImageWall({
   return (
     <div className="border-line bg-paper shrink-0 border-t">
       <div className="scrollbar-slim flex scroll-px-4 items-center gap-2 overflow-x-auto px-4 py-3">
-        {assets.map((asset) => {
-          const active = asset.id === currentId
-          return (
-            <button
-              key={asset.id}
-              type="button"
-              disabled={disabled || active}
-              onClick={() => onPick(asset.id)}
-              title={
-                active
-                  ? `当前画布 · ${KIND_LABELS[asset.kind]}`
-                  : `采用这张 · ${KIND_LABELS[asset.kind]} ${asset.width}×${asset.height}`
-              }
-              className={`bg-canvas group relative size-16 shrink-0 overflow-hidden rounded-[10px] border-2 transition-all duration-200 disabled:cursor-default ${
-                active
-                  ? 'border-brand shadow-control'
-                  : 'border-line hover:border-brand hover:-translate-y-0.5 hover:shadow-control active:translate-y-0 active:scale-95'
-              }`}
-            >
-              <img
-                src={asset.url}
-                alt=""
-                loading="lazy"
-                className="size-full object-contain transition-transform duration-200 group-hover:scale-105"
-              />
-              <span className="bg-ink/70 absolute right-0 bottom-0 left-0 py-0.5 text-[10px] text-white">
-                {KIND_LABELS[asset.kind]}
-              </span>
-            </button>
+        {assets
+          .filter((asset) => asset.kind !== 'mask')
+          .filter(
+            (asset) =>
+              asset.id === currentId || (asset.kind !== 'subject' && asset.kind !== 'background'),
           )
-        })}
+          .map((asset) => {
+            const active = asset.id === currentId
+            return (
+              <button
+                key={asset.id}
+                type="button"
+                disabled={disabled || active}
+                onClick={() => onPick(asset.id)}
+                title={
+                  active
+                    ? `当前画布 · ${KIND_LABELS[asset.kind]}`
+                    : `采用这张 · ${KIND_LABELS[asset.kind]} ${asset.width}×${asset.height}`
+                }
+                className={`bg-canvas group relative size-16 shrink-0 overflow-hidden rounded-[10px] border-2 transition-all duration-200 disabled:cursor-default ${
+                  active
+                    ? 'border-brand shadow-control'
+                    : 'border-line hover:border-brand hover:-translate-y-0.5 hover:shadow-control active:translate-y-0 active:scale-95'
+                }`}
+              >
+                <img
+                  src={asset.url}
+                  alt=""
+                  loading="lazy"
+                  className="size-full object-contain transition-transform duration-200 group-hover:scale-105"
+                />
+                <span className="bg-ink/70 absolute right-0 bottom-0 left-0 py-0.5 text-[10px] text-white">
+                  {KIND_LABELS[asset.kind]}
+                </span>
+              </button>
+            )
+          })}
       </div>
     </div>
   )

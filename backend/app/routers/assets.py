@@ -12,8 +12,9 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from app.db import SessionDep
 from app.deps import CurrentUser
 from app.models.asset import AssetKind, AssetSource
-from app.schemas.asset import AssetOut
+from app.schemas.asset import AssetOut, LibraryGroupOut
 from app.services import assets as asset_service
+from app.services.assets import ORPHAN_TITLE
 from app.services.images import MAX_FILE_BYTES, ImageRejected, probe
 
 router = APIRouter(prefix="/assets", tags=["assets"])
@@ -73,6 +74,35 @@ async def list_assets(
     """
     records = await asset_service.list_for_user(session, user.id, limit)
     return [AssetOut.of(asset) for asset in records]
+
+
+@router.get(
+    "/library",
+    summary="获取素材库",
+    description="按编辑会话分组的素材列表，遮罩等中间产物不返回。",
+)
+async def list_library(
+    user: CurrentUser,
+    session: SessionDep,
+    limit: Annotated[int, Query(ge=1, le=200, description="返回的最大会话数")] = 50,
+) -> list[LibraryGroupOut]:
+    """
+    获取创作页素材库。
+
+    - **limit**: 参与分组的最大会话数（1-200），默认 50
+    - **返回**: 按会话分组（session_id 为空即未归组）的素材列表
+    """
+    groups = await asset_service.library_for_user(session, user.id, limit)
+    return [
+        LibraryGroupOut(
+            session_id=record.id if record else None,
+            title=record.title if record else ORPHAN_TITLE,
+            updated_at=record.updated_at if record else cover.created_at,
+            cover=AssetOut.of(cover),
+            assets=[AssetOut.of(asset) for asset in assets],
+        )
+        for record, cover, assets in groups
+    ]
 
 
 @router.get(
