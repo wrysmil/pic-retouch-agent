@@ -1,10 +1,12 @@
 from app.edits.document import (
     crop,
     flip,
+    move,
     reorder,
     rotate,
     scale,
     set_opacity,
+    set_visible,
 )
 from app.edits.mask import apply_masked
 from app.edits.pixels import adjust, remove_background
@@ -16,9 +18,11 @@ __all__ = [
     "crop",
     "flatten",
     "flip",
+    "move",
     "remove_background",
     "reorder",
     "rotate",
     "scale",
     "set_opacity",
+    "set_visible",
 ]

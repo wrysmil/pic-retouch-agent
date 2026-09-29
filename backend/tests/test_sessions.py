@@ -18,15 +18,15 @@ def other_credentials() -> dict[str, str]:
     return {"username": f"test_{uuid.uuid4().hex[:10]}", "password": "secret123"}
 
 
-async def upload(client: httpx.AsyncClient, size=(320, 240)) -> str:
-    response = await client.post("/api/assets", files=upload_payload(make_image(size)))
+async def upload(client: httpx.AsyncClient, size=(320, 240), data: bytes | None = None) -> str:
+    response = await client.post("/api/assets", files=upload_payload(data or make_image(size)))
     assert response.status_code == 201, response.text
     return response.json()["id"]
 
 
-async def open_session(client: httpx.AsyncClient, **overrides) -> dict:
-    payload = {"current_asset_id": await upload(client)} | overrides
-    response = await client.post("/api/sessions", json=payload)
+async def open_session(client: httpx.AsyncClient, image: bytes | None = None, **overrides) -> dict:
+    asset_id = await upload(client, data=image) if image else await upload(client)
+    response = await client.post("/api/sessions", json={"current_asset_id": asset_id} | overrides)
     assert response.status_code == 201, response.text
     return response.json()
 

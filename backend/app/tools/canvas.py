@@ -3,7 +3,17 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.edits.document import EditError, crop, flip, reorder, rotate, scale, set_opacity
+from app.edits.document import (
+    EditError,
+    crop,
+    flip,
+    move,
+    reorder,
+    rotate,
+    scale,
+    set_opacity,
+    set_visible,
+)
 from app.layers import LayerMissing
 from app.models import ToolRun
 from app.ratios import Ratio
@@ -35,6 +45,12 @@ class OpacityIn(LayerRef):
     opacity: float = Field(ge=0, le=1)
 
 
+class VisibleIn(LayerRef):
+    """显隐入参，visible 是绝对值而非翻转。"""
+
+    visible: bool
+
+
 class ScaleIn(LayerRef):
     # 相对倍率与绝对缩放两套字段并存，兼容模型的不同表述
     factor: float | None = Field(default=None, gt=0, le=8)
@@ -57,6 +73,21 @@ class RotateIn(LayerRef):
     def _need_angle(self) -> "RotateIn":
         if self.angle is None and self.rotation is None:
             raise ValueError("需要旋转角度")
+        return self
+
+
+class MoveIn(LayerRef):
+    """x/y 绝对坐标，dx/dy 相对位移，四者至少给一个。"""
+
+    x: float | None = None
+    y: float | None = None
+    dx: float | None = None
+    dy: float | None = None
+
+    @model_validator(mode="after")
+    def _need_delta(self) -> "MoveIn":
+        if self.x is None and self.y is None and self.dx is None and self.dy is None:
+            raise ValueError("需要坐标或位移")
         return self
 
 
@@ -139,6 +170,16 @@ async def set_layer_opacity(session: AsyncSession, run: ToolRun) -> dict:
     )
 
 
+async def set_layer_visible(session: AsyncSession, run: ToolRun) -> dict:
+    """显示或隐藏指定图层，隐藏只是不参与合成，内容仍在。"""
+
+    return await _apply(
+        session,
+        run,
+        lambda doc, params: set_visible(doc, params.get(_LAYER), params["visible"]),
+    )
+
+
 async def scale_layer(session: AsyncSession, run: ToolRun) -> dict:
     """缩放图层，等比用 factor，独立指定 X/Y 用 scale_x / scale_y。"""
 
@@ -166,6 +207,23 @@ async def rotate_layer(session: AsyncSession, run: ToolRun) -> dict:
             params.get(_LAYER),
             angle=params.get("angle"),
             rotation=params.get("rotation"),
+        ),
+    )
+
+
+async def move_layer(session: AsyncSession, run: ToolRun) -> dict:
+    """移动图层左上角；绝对坐标与相对位移都行，默认最上层图像。"""
+
+    return await _apply(
+        session,
+        run,
+        lambda doc, params: move(
+            doc,
+            params.get(_LAYER),
+            x=params.get("x"),
+            y=params.get("y"),
+            dx=params.get("dx"),
+            dy=params.get("dy"),
         ),
     )
 
@@ -230,6 +288,13 @@ SET_LAYER_OPACITY = _canvas(
     OpacityIn,
     set_layer_opacity,
 )
+SET_LAYER_VISIBLE = _canvas(
+    "set_layer_visible",
+    "显隐",
+    "显示或隐藏指定图层，不删除内容。",
+    VisibleIn,
+    set_layer_visible,
+)
 REORDER_LAYER = _canvas(
     "reorder_layer",
     "图层顺序",
@@ -250,4 +315,11 @@ ROTATE_LAYER = _canvas(
     "旋转图层。angle 为相对角度，rotation 为绝对角度，顺时针为正。",
     RotateIn,
     rotate_layer,
+)
+MOVE_LAYER = _canvas(
+    "move_layer",
+    "移动",
+    "移动指定图层。x/y 为绝对坐标，dx/dy 为相对像素位移。默认最上层图像。",
+    MoveIn,
+    move_layer,
 )

@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     planner_model: str = "qwen-plus"
     # 抠图 provider: auto（有 rembg 用 rembg，否则四角抠图）| rembg | corner（测试强制）
     matting_provider: str = "auto"
+    # 文字识别 provider: auto（有 rapidocr 则拆出文字层）| rapidocr | none（测试强制）
+    ocr_provider: str = "auto"
 
     @property
     def is_production(self) -> bool:

@@ -42,6 +42,15 @@ def corner_matting():
     settings.matting_provider = original
 
 
+@pytest.fixture(scope="session", autouse=True)
+def skip_ocr():
+    """测试关掉文字识别，拆层不应依赖 OCR 引擎是否装得上。"""
+    settings = get_settings()
+    original, settings.ocr_provider = settings.ocr_provider, "none"
+    yield
+    settings.ocr_provider = original
+
+
 @pytest.fixture
 async def client():
     transport = ASGITransport(app=app)
