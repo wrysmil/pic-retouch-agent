@@ -29,3 +29,6 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# 浏览器调试产物
+.playwright-mcp/
