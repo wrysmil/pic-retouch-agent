@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { isTerminal } from '@/api/runs'
@@ -10,6 +10,7 @@ import {
 } from '@/api/sessions'
 import { errorMessage } from '@/hooks/useAuth'
 import { useRun } from '@/hooks/useRun'
+import { useEditorUi } from '@/stores/editorUi'
 import { toast } from '@/stores/toasts'
 
 const LIST_KEY = ['sessions']
@@ -88,24 +89,42 @@ export function useSessionTools(id: string) {
     onError: (error) => toast(errorMessage(error), 'danger'),
   })
 
+  // 撤销是链式的，上一次没落定就再点一次会连着回退好几步
+  const historyLock = useRef(false)
+  const unlockHistory = () => {
+    historyLock.current = false
+  }
+
   const undo = useMutation({
     mutationFn: () => sessionsApi.undo(id),
     onSuccess: cache,
     onError: (error) => toast(errorMessage(error), 'danger'),
+    onSettled: unlockHistory,
   })
   const redo = useMutation({
     mutationFn: () => sessionsApi.redo(id),
     onSuccess: cache,
     onError: (error) => toast(errorMessage(error), 'danger'),
+    onSettled: unlockHistory,
   })
 
   const waiting = Boolean(pendingRunId && (!live.status || !isTerminal(live.status)))
   const busy = invoke.isPending || undo.isPending || redo.isPending || waiting
 
+  const runHistory = (action: () => void) => {
+    if (historyLock.current || busy) return
+    historyLock.current = true
+    action()
+  }
+
   return {
-    invoke: (tool: string, params?: Record<string, unknown>) => invoke.mutate({ tool, params }),
-    undo: () => undo.mutate(),
-    redo: () => redo.mutate(),
+    invoke: (tool: string, params?: Record<string, unknown>) => {
+      // 确认按钮只武装自己这一个动作，换工具就得先解除武装
+      useEditorUi.getState().setConfirming(null)
+      invoke.mutate({ tool, params })
+    },
+    undo: () => runHistory(() => undo.mutate()),
+    redo: () => runHistory(() => redo.mutate()),
     busy,
     pendingStage: waiting ? live.stage : '',
     pendingProgress: waiting ? live.progress : 0,

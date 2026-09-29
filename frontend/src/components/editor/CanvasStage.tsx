@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type Konva from 'konva'
 import {
   Circle,
@@ -8,6 +8,7 @@ import {
   Line,
   Rect,
   Stage,
+  Text,
   Transformer,
 } from 'react-konva'
 
@@ -24,6 +25,12 @@ const NO_FILTERS: ((imageData: ImageData) => void)[] = []
 // 预览按屏幕分辨率量级缓存，滤镜每帧重算才跟得上滑杆
 const PREVIEW_PIXEL_RATIO = 0.6
 
+const MIN_LAYER_SCALE = 0.1
+const MAX_LAYER_SCALE = 8
+const SELECTED_STROKE = '#5f98ad'
+
+type Drop = { x: number; y: number }
+
 export default function CanvasStage({
   document,
   previous,
@@ -31,6 +38,8 @@ export default function CanvasStage({
   selection = null,
   onPoint,
   onStroke,
+  onMove,
+  onScale,
 }: {
   document: LayerDocument
   previous: LayerDocument | null
@@ -38,6 +47,8 @@ export default function CanvasStage({
   selection?: CanvasSelection | null
   onPoint?: (x: number, y: number) => void
   onStroke?: (points: { x: number; y: number }[]) => void
+  onMove?: (layerId: string, x: number, y: number) => void
+  onScale?: (layerId: string, scale: number) => void
 }) {
   const [containerRef, size] = useElementSize<HTMLDivElement>()
   const scale = useCanvasView((state) => state.scale)
@@ -59,10 +70,16 @@ export default function CanvasStage({
   const adjustPreview = useEditorUi((state) => state.adjustPreview)
   const layerPreview = useEditorUi((state) => state.layerPreview)
   const selectMode = useEditorUi((state) => state.selectMode)
+  const selectedLayerId = useEditorUi((state) => state.selectedLayerId)
+  const selectLayer = useEditorUi((state) => state.selectLayer)
   const stroke = useSelectStroke()
 
   const fitted = useRef('')
+  const [holdingStage, setHoldingStage] = useState(false)
   const selecting = Boolean(selectMode)
+  // 裁剪、对比、选区三种模式下画布手势另有用途，图层这时不参与交互
+  const interactive = !selecting && !cropOpen && !compareOpen
+  const stageDraggable = !cropOpen && !selecting && !holdingStage
 
   const canvasPoint = (stage: Konva.Stage | null) => {
     const pointer = stage?.getRelativePointerPosition()
@@ -105,7 +122,7 @@ export default function CanvasStage({
         y={y}
         scaleX={scale}
         scaleY={scale}
-        draggable={!cropOpen && !selecting}
+        draggable={stageDraggable}
         onMouseDown={(event) => {
           if (selectMode !== 'brush') return
           const point = canvasPoint(event.target.getStage())
@@ -181,6 +198,14 @@ export default function CanvasStage({
             urls={urls}
             color={color}
             layerPreview={layerPreview}
+            interactive={interactive}
+            stageDraggable={stageDraggable}
+            viewScale={scale}
+            selectedId={selectedLayerId}
+            onSelect={selectLayer}
+            onMove={onMove}
+            onScale={onScale}
+            onHoldStage={setHoldingStage}
           />
         )}
 
@@ -217,32 +242,257 @@ function DocumentLayer({
   color,
   layerPreview,
   clip,
+  interactive = false,
+  stageDraggable = false,
+  viewScale = 1,
+  selectedId = null,
+  onSelect,
+  onMove,
+  onScale,
+  onHoldStage,
 }: {
   document: LayerDocument
   urls: Map<string, string>
   color?: AdjustPreview | null
   layerPreview?: LayerPreview | null
   clip?: { x: number; y: number; width: number; height: number }
+  interactive?: boolean
+  stageDraggable?: boolean
+  viewScale?: number
+  selectedId?: string | null
+  onSelect?: (id: string) => void
+  onMove?: (layerId: string, x: number, y: number) => void
+  onScale?: (layerId: string, scale: number) => void
+  onHoldStage?: (held: boolean) => void
 }) {
-  const images = document.layers.filter((layer) => layer.visible && layer.kind === 'image')
+  const [selectedNode, setSelectedNode] = useState<Konva.Node | null>(null)
+  const [pinnedScale, setPinnedScale] = useState<{ id: string; scale: number } | null>(null)
+  const layers = document.layers.filter((layer) => layer.visible)
+  const selected = layers.find((layer) => layer.id === selectedId) ?? null
+
+  useEffect(() => {
+    setSelectedNode(null)
+  }, [selectedId])
+
+  useEffect(() => {
+    if (!pinnedScale || !selected || selected.id !== pinnedScale.id) return
+    if (Math.abs(Math.abs(selected.transform.scale_x) - pinnedScale.scale) < 0.001) {
+      setPinnedScale(null)
+    }
+  }, [pinnedScale, selected])
+
   return (
     <KonvaLayer
-      listening={false}
+      listening={interactive}
       clipX={clip?.x ?? 0}
       clipY={clip?.y ?? 0}
       clipWidth={clip?.width ?? document.width}
       clipHeight={clip?.height ?? document.height}
     >
-      {images.map((layer) => (
-        <ImageLayer
-          key={layer.id}
-          layer={layer}
-          url={layer.asset_id ? urls.get(layer.asset_id) : undefined}
-          color={color ?? null}
-          preview={layerPreview?.id === layer.id ? layerPreview : null}
+      {layers.map((layer) =>
+        layer.kind === 'text' ? (
+          <TextLayer
+            key={layer.id}
+            layer={layer}
+            preview={layerPreview?.id === layer.id ? layerPreview : null}
+            pinnedScale={pinnedScale?.id === layer.id ? pinnedScale.scale : null}
+            interactive={interactive}
+            stageDraggable={stageDraggable}
+            selected={selectedId === layer.id}
+            onSelect={onSelect}
+            onMove={onMove}
+            onHoldStage={onHoldStage}
+            onNode={selectedId === layer.id ? setSelectedNode : undefined}
+          />
+        ) : layer.kind === 'image' ? (
+          <ImageLayer
+            key={layer.id}
+            layer={layer}
+            url={layer.asset_id ? urls.get(layer.asset_id) : undefined}
+            color={color ?? null}
+            preview={layerPreview?.id === layer.id ? layerPreview : null}
+            pinnedScale={pinnedScale?.id === layer.id ? pinnedScale.scale : null}
+            interactive={interactive}
+            stageDraggable={stageDraggable}
+            selected={selectedId === layer.id}
+            onSelect={onSelect}
+            onMove={onMove}
+            onHoldStage={onHoldStage}
+            onNode={selectedId === layer.id ? setSelectedNode : undefined}
+          />
+        ) : null,
+      )}
+      {interactive && selected && selectedNode && (
+        <LayerScaler
+          node={selectedNode}
+          layer={selected}
+          viewScale={viewScale}
+          onScale={(layerId, value) => {
+            setPinnedScale({ id: layerId, scale: value })
+            onScale?.(layerId, value)
+          }}
+          onHoldStage={onHoldStage}
         />
-      ))}
+      )}
     </KonvaLayer>
+  )
+}
+
+/** 位置优先级：拖动中的落点 > 图层预览 > 文档。文档追上后前两者自然被撤下。 */
+function layerPoint(layer: Layer, preview: LayerPreview | null, drop: Drop | null) {
+  return {
+    x: (drop?.x ?? preview?.x ?? layer.transform.x) + layer.width / 2,
+    y: (drop?.y ?? preview?.y ?? layer.transform.y) + layer.height / 2,
+  }
+}
+
+/** 倍率取绝对值，方向由文档里的正负号决定，缩放不会把翻转抹掉。 */
+function layerScale(layer: Layer, preview: LayerPreview | null, sized: number | null) {
+  const magnitude = sized ?? preview?.scale ?? Math.abs(layer.transform.scale_x)
+  return {
+    x: (Math.sign(layer.transform.scale_x) || 1) * magnitude,
+    y: (Math.sign(layer.transform.scale_y) || 1) * magnitude,
+  }
+}
+
+function clampLayerScale(value: number) {
+  return Math.min(MAX_LAYER_SCALE, Math.max(MIN_LAYER_SCALE, value))
+}
+
+function useLayerInteract(
+  layer: Layer,
+  interactive: boolean,
+  stageDraggable: boolean,
+  onSelect?: (id: string) => void,
+  onMove?: (layerId: string, x: number, y: number) => void,
+  onHoldStage?: (held: boolean) => void,
+) {
+  const [drop, setDrop] = useState<Drop | null>(null)
+  const dragged = useRef(false)
+  const movable = interactive && !layer.locked
+
+  useEffect(() => {
+    if (!drop) return
+    if (Math.abs(layer.transform.x - drop.x) < 0.5 && Math.abs(layer.transform.y - drop.y) < 0.5) {
+      setDrop(null)
+    }
+  }, [layer.transform.x, layer.transform.y, drop])
+
+  const restoreStage = (node: Konva.Node) => {
+    node.getStage()?.draggable(stageDraggable)
+  }
+
+  // 拖完松手也会触发一次 click，靠这个标记把它和「点选」区分开
+  const pick = () => {
+    if (dragged.current) {
+      dragged.current = false
+      return
+    }
+    onSelect?.(layer.id)
+  }
+
+  return {
+    drop,
+    handlers: {
+      listening: interactive,
+      draggable: movable,
+      dragDistance: 2,
+      onMouseDown: (event: Konva.KonvaEventObject<MouseEvent>) => {
+        event.cancelBubble = true
+        if (movable) event.target.getStage()?.draggable(false)
+      },
+      onMouseUp: (event: Konva.KonvaEventObject<MouseEvent>) => {
+        if (!dragged.current) restoreStage(event.target)
+      },
+      onMouseEnter: (event: Konva.KonvaEventObject<MouseEvent>) => {
+        const container = event.target.getStage()?.container()
+        if (container && movable) container.style.cursor = 'move'
+      },
+      onMouseLeave: (event: Konva.KonvaEventObject<MouseEvent>) => {
+        const container = event.target.getStage()?.container()
+        if (container) container.style.cursor = ''
+      },
+      onClick: pick,
+      onTap: pick,
+      onDragStart: (event: Konva.KonvaEventObject<DragEvent>) => {
+        event.cancelBubble = true
+        dragged.current = true
+        event.target.getStage()?.draggable(false)
+        onHoldStage?.(true)
+      },
+      onDragMove: (event: Konva.KonvaEventObject<DragEvent>) => {
+        event.cancelBubble = true
+      },
+      onDragEnd: (event: Konva.KonvaEventObject<DragEvent>) => {
+        event.cancelBubble = true
+        restoreStage(event.target)
+        onHoldStage?.(false)
+        const next = {
+          x: event.target.x() - layer.width / 2,
+          y: event.target.y() - layer.height / 2,
+        }
+        onSelect?.(layer.id)
+        if (Math.abs(next.x - layer.transform.x) < 0.5 && Math.abs(next.y - layer.transform.y) < 0.5) {
+          return
+        }
+        setDrop(next)
+        onMove?.(layer.id, next.x, next.y)
+      },
+    },
+  }
+}
+
+function TextLayer({
+  layer,
+  preview,
+  pinnedScale = null,
+  interactive = false,
+  stageDraggable = false,
+  selected = false,
+  onSelect,
+  onMove,
+  onHoldStage,
+  onNode,
+}: {
+  layer: Layer
+  preview: LayerPreview | null
+  pinnedScale?: number | null
+  interactive?: boolean
+  stageDraggable?: boolean
+  selected?: boolean
+  onSelect?: (id: string) => void
+  onMove?: (layerId: string, x: number, y: number) => void
+  onHoldStage?: (held: boolean) => void
+  onNode?: (node: Konva.Node | null) => void
+}) {
+  const drag = useLayerInteract(layer, interactive, stageDraggable, onSelect, onMove, onHoldStage)
+  const { transform } = layer
+  const point = layerPoint(layer, preview, drag.drop)
+  const sized = layerScale(layer, preview, pinnedScale)
+
+  return (
+    <Text
+      ref={(node) => onNode?.(node)}
+      text={layer.text || layer.name}
+      x={point.x}
+      y={point.y}
+      offsetX={layer.width / 2}
+      offsetY={layer.height / 2}
+      width={layer.width}
+      height={layer.height}
+      fontSize={layer.font_size ?? Math.max(12, layer.height * 0.72)}
+      fill={layer.fill ?? '#141414'}
+      align="center"
+      verticalAlign="middle"
+      scaleX={sized.x}
+      scaleY={sized.y}
+      rotation={preview?.rotation ?? transform.rotation}
+      opacity={preview?.opacity ?? layer.opacity}
+      {...drag.handlers}
+      stroke={selected && interactive ? SELECTED_STROKE : undefined}
+      strokeWidth={selected && interactive ? 2 : 0}
+      strokeScaleEnabled={false}
+    />
   )
 }
 
@@ -251,14 +501,31 @@ function ImageLayer({
   url,
   color,
   preview,
+  pinnedScale = null,
+  interactive = false,
+  stageDraggable = false,
+  selected = false,
+  onSelect,
+  onMove,
+  onHoldStage,
+  onNode,
 }: {
   layer: Layer
   url: string | undefined
   color: AdjustPreview | null
   preview: LayerPreview | null
+  pinnedScale?: number | null
+  interactive?: boolean
+  stageDraggable?: boolean
+  selected?: boolean
+  onSelect?: (id: string) => void
+  onMove?: (layerId: string, x: number, y: number) => void
+  onHoldStage?: (held: boolean) => void
+  onNode?: (node: Konva.Node | null) => void
 }) {
   const image = useCanvasImage(url)
   const ref = useRef<Konva.Image>(null)
+  const drag = useLayerInteract(layer, interactive, stageDraggable, onSelect, onMove, onHoldStage)
   const filtered = color !== null && image?.safe === true
   // 数值不变时保持数组同一引用，平移缩放才不会白白重算滤镜
   const filters = useMemo(
@@ -277,27 +544,97 @@ function ImageLayer({
   if (!image) return null
 
   const { transform } = layer
-  const scale = preview?.scale
-  const direction = {
-    x: Math.sign(transform.scale_x) || 1,
-    y: Math.sign(transform.scale_y) || 1,
-  }
+  const point = layerPoint(layer, preview, drag.drop)
+  const sized = layerScale(layer, preview, pinnedScale)
 
   return (
     <KonvaImage
-      ref={ref}
+      ref={(node) => {
+        ref.current = node
+        onNode?.(node)
+      }}
       image={image.element}
-      x={transform.x + layer.width / 2}
-      y={transform.y + layer.height / 2}
+      x={point.x}
+      y={point.y}
       offsetX={layer.width / 2}
       offsetY={layer.height / 2}
       width={layer.width}
       height={layer.height}
-      scaleX={scale === undefined ? transform.scale_x : direction.x * scale}
-      scaleY={scale === undefined ? transform.scale_y : direction.y * scale}
+      scaleX={sized.x}
+      scaleY={sized.y}
       rotation={preview?.rotation ?? transform.rotation}
       opacity={preview?.opacity ?? layer.opacity}
       filters={filters}
+      {...drag.handlers}
+      stroke={selected && interactive ? SELECTED_STROKE : undefined}
+      strokeWidth={selected && interactive ? 2 : 0}
+      strokeScaleEnabled={false}
+    />
+  )
+}
+
+/** 选中图层的四角缩放手柄，锚点尺寸按视图倍率反向补偿，屏幕上手感恒定。 */
+function LayerScaler({
+  node,
+  layer,
+  viewScale,
+  onScale,
+  onHoldStage,
+}: {
+  node: Konva.Node
+  layer: Layer
+  viewScale: number
+  onScale?: (layerId: string, scale: number) => void
+  onHoldStage?: (held: boolean) => void
+}) {
+  const ref = useRef<Konva.Transformer>(null)
+  const invert = 1 / viewScale
+
+  useEffect(() => {
+    const transformer = ref.current
+    if (!transformer) return
+    transformer.nodes([node])
+    transformer.getLayer()?.batchDraw()
+    return () => {
+      transformer.nodes([])
+    }
+  }, [node])
+
+  return (
+    <Transformer
+      ref={ref}
+      rotateEnabled={false}
+      flipEnabled={false}
+      keepRatio
+      enabledAnchors={['top-left', 'top-right', 'bottom-left', 'bottom-right']}
+      ignoreStroke
+      anchorSize={10 * invert}
+      anchorCornerRadius={3 * invert}
+      anchorStrokeWidth={1.5 * invert}
+      borderStrokeWidth={invert}
+      anchorStroke="#427f95"
+      borderStroke={SELECTED_STROKE}
+      boundBoxFunc={(oldBox, newBox) => {
+        const min = MIN_LAYER_SCALE * Math.min(layer.width, layer.height)
+        const max = MAX_LAYER_SCALE * Math.max(layer.width, layer.height)
+        if (newBox.width < min || newBox.height < min || newBox.width > max || newBox.height > max) {
+          return oldBox
+        }
+        return newBox
+      }}
+      onTransformStart={() => onHoldStage?.(true)}
+      onTransformEnd={() => {
+        onHoldStage?.(false)
+        const next = clampLayerScale(Math.abs(node.scaleX()))
+        const direction = {
+          x: Math.sign(layer.transform.scale_x) || 1,
+          y: Math.sign(layer.transform.scale_y) || 1,
+        }
+        node.scaleX(direction.x * next)
+        node.scaleY(direction.y * next)
+        if (Math.abs(next - Math.abs(layer.transform.scale_x)) < 0.001) return
+        onScale?.(layer.id, next)
+      }}
     />
   )
 }
