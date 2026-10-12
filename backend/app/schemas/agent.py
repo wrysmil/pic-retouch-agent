@@ -41,7 +41,7 @@ class PlanStepOut(BaseModel):
         return cls(
             id=step.get("id") or step["tool"],
             tool=step["tool"],
-            label=label_of(step["tool"]),
+            label=label_of(step["tool"], step.get("params")),
             depends_on=list(step.get("depends_on") or []),
             run_id=uuid.UUID(run_id) if run_id else None,
             # 老数据没有 status 字段：有 run_id 就当已完成，否则待执行

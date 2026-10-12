@@ -83,6 +83,9 @@ function fitCrop(document: LayerDocument, ratio: CropRatio): CropRect {
   }
 }
 
+// 局部替换依赖当轮选区，一旦离开选择模式表单就没用了，留着只会挡住画布
+const withoutReplace = (panel: Panel): Panel => (panel === 'replace' ? null : panel)
+
 export const useEditorUi = create<EditorUi>((set) => ({
   selectedLayerId: null,
   cropOpen: false,
@@ -106,14 +109,15 @@ export const useEditorUi = create<EditorUi>((set) => ({
     })),
 
   openCrop: (document, ratio = 'free') =>
-    set({
+    set((state) => ({
       cropOpen: true,
       compareOpen: false,
       selectMode: null,
       confirming: null,
+      panel: withoutReplace(state.panel),
       cropRatio: ratio,
       cropRect: fitCrop(document, ratio),
-    }),
+    })),
 
   setCropRatio: (cropRatio, document) => set({ cropRatio, cropRect: fitCrop(document, cropRatio) }),
 
@@ -126,6 +130,7 @@ export const useEditorUi = create<EditorUi>((set) => ({
       compareOpen,
       cropOpen: compareOpen ? false : state.cropOpen,
       selectMode: compareOpen ? null : state.selectMode,
+      panel: compareOpen ? withoutReplace(state.panel) : state.panel,
       confirming: compareOpen ? null : state.confirming,
     })),
 
@@ -139,7 +144,7 @@ export const useEditorUi = create<EditorUi>((set) => ({
       cropOpen: false,
       compareOpen: false,
       cropRect: selectMode ? null : state.cropRect,
-      panel: selectMode ? null : state.panel,
+      panel: selectMode ? null : withoutReplace(state.panel),
       confirming: null,
     })),
 
