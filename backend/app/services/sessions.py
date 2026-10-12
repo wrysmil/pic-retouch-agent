@@ -426,11 +426,47 @@ async def switch_current(session: AsyncSession, record: EditSession, asset: Asse
     - **record**: 会话记录
     - **asset**: 新的当前素材
     - **返回**: 更新后的会话记录
-    - **效果**: 更新 current_asset_id，递增 revision，重置 document，记录一条可撤销历史
+    - **效果**: 更新 current_asset_id，递增 revision，记录一条可撤销历史
+
+    图层文档取该图上次在画布上的样子，而不是按素材新建一张底图：
+    拆过层的画布切走再切回来，图层结构要还在。
     """
     if record.current_asset_id == asset.id:
         return record
-    return await apply_edit(session, record, "switch_current", current=asset, extra_assets=[asset])
+    return await apply_edit(
+        session,
+        record,
+        "switch_current",
+        current=asset,
+        document=await _last_document_for(session, record, asset.id),
+        extra_assets=[asset],
+    )
+
+
+def _document_for(state: dict | None, asset_id: str) -> LayerDocument | None:
+    """快照属于这张图时取它的文档。"""
+    if not state or state.get("current_asset_id") != asset_id:
+        return None
+    raw = state.get("document")
+    return LayerDocument.model_validate(raw) if raw else None
+
+
+async def _last_document_for(
+    session: AsyncSession, record: EditSession, asset_id: uuid.UUID
+) -> LayerDocument | None:
+    """该图上次在画布上的文档。没有则返回 None，由 apply_edit 用 document_of 新建。
+
+    历史按 seq 倒序，先命中的就是最近一次。当前快照之外还要看 params.before：
+    这张图刚被切走时，它的文档只存在于切换前那一条记录里。
+    """
+    target = str(asset_id)
+    for entry in await history_of(session, record):
+        found = _document_for(entry.result, target) or _document_for(
+            (entry.params or {}).get("before"), target
+        )
+        if found is not None:
+            return found
+    return None
 
 
 async def undo(session: AsyncSession, record: EditSession) -> EditSession:
