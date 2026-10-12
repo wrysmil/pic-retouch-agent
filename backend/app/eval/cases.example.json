@@ -2,7 +2,7 @@
   {
     "id": "matting-1",
     "task": "remove_background",
-    "input": "images/product.png",
+    "input": "images/product-white.png",
     "expect": "expect/product-alpha.png",
     "metrics": ["alpha_iou"],
     "thresholds": { "alpha_iou": 0.8 }
