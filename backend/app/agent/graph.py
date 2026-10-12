@@ -1,22 +1,20 @@
-import uuid
-from dataclasses import dataclass
 from functools import lru_cache
 from typing import TypedDict
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.llm import planner
+from app.agent.plan import PlanError, validate
 from app.services import tools as tool_service
-from app.tools import UnknownTool, label_of, spec_of
+from app.tools import UnknownTool
 
 # 规划模型的系统提示词。{context} 由 services/agent.describe() 填当前画布摘要
 _SYSTEM = """你是电商图片修图助手，通过调用工具完成用户的修图请求。
 
 规则：
-- 只能使用已提供的工具，本轮最多安排一步。
+- 只能使用已提供的工具。可以一次安排多步，按完成先后调用；后一步默认依赖前一步。
+- 能一步完成的不要拆成多步，最多 8 步。
 - 缺失参数用画布信息与常识补齐，可推断的参数不要反问用户。
 - 画布摘要标明已有选区时，局部消除/替换/提升为图层可直接调用，不要再让用户重选。
 - 用户要求拆层、把物体独立成层时，使用 split_layers 或 promote_object_to_layer。
@@ -27,15 +25,6 @@ _SYSTEM = """你是电商图片修图助手，通过调用工具完成用户的�
 
 # 模型可能只回 tool_calls 而没有正文（或反过来），此时需要一句能直接显示的话兜底
 _FALLBACK_REPLY = "没太理解这条指令，换个说法或说得更具体一些。"
-
-
-@dataclass(frozen=True)
-class AgentDeps:
-    """图执行所需的运行时依赖。不放进 state，以便后续接入 checkpoint。"""
-
-    session: AsyncSession
-    user_id: uuid.UUID
-    session_id: uuid.UUID
 
 
 class AgentState(TypedDict):
@@ -52,7 +41,7 @@ class AgentState(TypedDict):
 
 
 async def _plan(state: AgentState) -> AgentState:
-    """调模型规划一步：把画布摘要与用户指令一次性发给它，拿回工具调用。"""
+    """调模型规划一轮：把画布摘要与用户指令一次性发给它，拿回工具调用。"""
 
     # 每次都是全新的两条消息，不带历史，模型对上一轮无记忆
     message = await planner().ainvoke(
@@ -69,48 +58,17 @@ async def _plan(state: AgentState) -> AgentState:
 
 
 def _verify(state: AgentState) -> AgentState:
-    """模型给出的计划一律经服务端校验，不可直接执行。"""
+    """模型给出的计划一律经服务端校验，不可直接执行。
 
-    checked: list[dict] = []
-    for step in state["plan"]:
-        try:
-            spec = spec_of(step["tool"])
-            # 用 tools.submit 同一套校验，模型填错参数在这里就拦下，不会走到落库
-            params = tool_service.validate(spec.name, step["params"])
-        except (UnknownTool, tool_service.InvalidParams) as exc:
-            # 整个计划作废而不是跳过这一步：单步执行没有中间态可站，宁可什么都不做
-            return {"plan": [], "reply": f"这一步暂时执行不了：{exc}"}
-        checked.append({"tool": spec.name, "params": params})
-    return {"plan": checked}
-
-
-async def _dispatch(state: AgentState, config: RunnableConfig) -> AgentState:
-    """下发已校验的计划。画布工具当场跑完，像素工具返回时还在排队。"""
-
-    # deps 走 RunnableConfig 而不是 state：它是运行时依赖，不该被当成图状态存下来
-    deps: AgentDeps = config["configurable"]["deps"]
-
-    plan: list[dict] = []
-    for step in state["plan"]:
-        # 与界面点击同一个入口：submit 内部决定是当场执行还是入队
-        run = await tool_service.submit(
-            deps.session, deps.user_id, step["tool"], step["params"], deps.session_id
-        )
-        # 带上 run_id，前端据此订阅 SSE 看这一部的进度与结果
-        plan.append(step | {"run_id": str(run.id)})
-
-    # 模型没写正文时自己拼一句，措辞用工具的中文标签而不是内部名字
-    labels = "、".join(label_of(step["tool"]) for step in plan)
-    return {"plan": plan, "reply": state["reply"] or f"好，正在{labels}。"}
-
-
-def _has_plan(state: AgentState) -> str:
-    """条件边：校验后还有计划才继续下发，否则就地结束。
-
-    模型认为指令与修图无关时会直接给一句话、不调工具，此时 plan 为空。
+    校验含三件事：工具存在、参数合该工具的入参模型、依赖结构成环与步数上限。
+    任何一项不过就整轮作废而不是跳过这一步：宁可什么都不做，也不带着
+    残缺的依赖关系往下跑。
     """
 
-    return "dispatch" if state["plan"] else END
+    try:
+        return {"plan": validate(state["plan"])}
+    except (UnknownTool, tool_service.InvalidParams, PlanError) as exc:
+        return {"plan": [], "reply": f"这一步暂时执行不了：{exc}"}
 
 
 @lru_cache
@@ -120,24 +78,21 @@ def _graph():
     builder = StateGraph(AgentState)
     builder.add_node("plan", _plan)
     builder.add_node("verify", _verify)
-    builder.add_node("dispatch", _dispatch)
 
     builder.add_edge(START, "plan")
     builder.add_edge("plan", "verify")
-    # verify 之后是唯一的分岔：计划非空走下发，为空直接收尾
-    builder.add_conditional_edges("verify", _has_plan, {"dispatch": "dispatch", END: END})
-    builder.add_edge("dispatch", END)
+    builder.add_edge("verify", END)
     return builder.compile()
 
 
-async def run(goal: str, context: str, deps: AgentDeps) -> tuple[str, list[dict]]:
-    """规划并下发一轮指令，返回给用户的答复与已下发的计划。"""
+async def run(goal: str, context: str) -> tuple[str, list[dict]]:
+    """规划并校验一轮指令，返回答复与尚未下发的计划。
 
-    state = await _graph().ainvoke(
-        # 初始 plan/reply 必须是全的：后面有节点只返回部分 key，缺键会读不到
-        {"goal": goal, "context": context, "plan": [], "reply": ""},
-        config={"configurable": {"deps": deps}},
-    )
+    图里不再下发工具：计划要先落库，多步时停住等用户确认，
+    真正的执行由 services/agent 按依赖逐步推进。
+    """
+
+    state = await _graph().ainvoke({"goal": goal, "context": context, "plan": [], "reply": ""})
     return state["reply"] or _FALLBACK_REPLY, state["plan"]
 
 
