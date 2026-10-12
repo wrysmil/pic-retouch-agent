@@ -63,6 +63,12 @@ def credentials() -> dict[str, str]:
     return {"username": f"{TEST_USER_PREFIX}{uuid.uuid4().hex[:10]}", "password": "secret123"}
 
 
+@pytest.fixture
+def other_credentials() -> dict[str, str]:
+    """第二个账号，用于验证跨用户访问被拒绝。"""
+    return {"username": f"{TEST_USER_PREFIX}other-{uuid.uuid4().hex[:8]}", "password": "secret123"}
+
+
 @pytest.fixture(autouse=True)
 async def cleanup_users():
     yield

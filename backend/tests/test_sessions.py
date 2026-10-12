@@ -12,12 +12,6 @@ async def signed_in(client: httpx.AsyncClient, credentials):
     return client
 
 
-@pytest.fixture
-def other_credentials() -> dict[str, str]:
-    """第二个账号，用于验证跨用户访问被拒绝。"""
-    return {"username": f"test_{uuid.uuid4().hex[:10]}", "password": "secret123"}
-
-
 async def upload(client: httpx.AsyncClient, size=(320, 240), data: bytes | None = None) -> str:
     response = await client.post("/api/assets", files=upload_payload(data or make_image(size)))
     assert response.status_code == 201, response.text
