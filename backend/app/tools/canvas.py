@@ -12,6 +12,7 @@ from app.edits.document import (
     rotate,
     scale,
     set_opacity,
+    set_text,
     set_visible,
 )
 from app.layers import LayerMissing
@@ -46,6 +47,14 @@ class VisibleIn(LayerRef):
     """显隐入参，visible 是绝对值而非翻转。"""
 
     visible: bool
+
+
+class TextIn(LayerRef):
+    """改文字入参，字号与颜色可选，不传则保持原值。"""
+
+    text: str = Field(max_length=500)
+    font_size: float | None = Field(default=None, ge=8, le=400)
+    fill: str | None = Field(default=None, pattern=r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
 
 class ScaleIn(LayerRef):
@@ -179,6 +188,22 @@ async def set_layer_visible(session: AsyncSession, run: ToolRun) -> dict:
     )
 
 
+async def set_layer_text(session: AsyncSession, run: ToolRun) -> dict:
+    """修改文字图层的文案，可选字号与颜色，默认改最上层可见文字。"""
+
+    return await _apply(
+        session,
+        run,
+        lambda doc, params: set_text(
+            doc,
+            params.get(_LAYER),
+            params["text"],
+            font_size=params.get("font_size"),
+            fill=params.get("fill"),
+        ),
+    )
+
+
 async def scale_layer(session: AsyncSession, run: ToolRun) -> dict:
     """缩放图层，等比用 factor，独立指定 X/Y 用 scale_x / scale_y。"""
 
@@ -305,6 +330,13 @@ SET_LAYER_VISIBLE = _canvas(
     "显示或隐藏指定图层，不删除内容。",
     VisibleIn,
     set_layer_visible,
+)
+SET_LAYER_TEXT = _canvas(
+    "set_layer_text",
+    "改文字",
+    "修改文字图层的文案，可选字号与颜色。未指定图层时改最上层可见文字。",
+    TextIn,
+    set_layer_text,
 )
 REORDER_LAYER = _canvas(
     "reorder_layer",

@@ -46,6 +46,7 @@ async def flatten_session(
     record: EditSession,
     *,
     background: tuple[int, int, int, int] = WHITE,
+    include_text: bool = True,
 ) -> bytes:
     """把多层的画布合成一张 PNG，交给像素工具处理。
 
@@ -57,6 +58,7 @@ async def flatten_session(
 
     background 决定画布底色：默认白底，模型看不到透明区域；
     已经抠出透明背景的图要接着调色时传 TRANSPARENT，否则透明区域会被压成白色。
+    include_text 为 False 时跳过文字层，供成层等仍保留矢量字的像素操作使用。
     """
     document = document_of(record)
     images: dict[uuid.UUID, bytes] = {}
@@ -68,4 +70,4 @@ async def flatten_session(
         if asset is None:
             continue
         images[asset.id] = await storage.get(asset.storage_key)
-    return flatten(document, images, background=background)
+    return flatten(document, images, background=background, include_text=include_text)
