@@ -1,15 +1,36 @@
 import logging
+import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app import agent
+from app.agent import plan as plan_mod
 from app.layers import Layer, LayerDocument, LayerKind
-from app.models import AgentRun, EditSession
+from app.models import AgentRun, EditSession, ToolRun
 from app.models.tool_run import RunStatus
-from app.services import assets, selections
+from app.services import assets, runs, selections, tools
+from app.tools import spec_of
 
 logger = logging.getLogger(__name__)
+
+
+class TurnNotFound(Exception):
+    """指定 id 的对话不属于这个会话。"""
+
+
+class CannotConfirm(Exception):
+    """这轮没有停在待确认的步骤。"""
+
+
+class CannotCancel(Exception):
+    """这轮已经结束，没有可取消的步骤。"""
+
+
+class CannotRetry(Exception):
+    """这轮没有失败的步骤。"""
+
 
 
 async def describe(session: AsyncSession, record: EditSession) -> str:
@@ -46,16 +67,17 @@ def _layer_name(layer: Layer) -> str:
 
 
 async def respond(session: AsyncSession, record: EditSession, goal: str) -> AgentRun:
-    """规划一轮指令并落库。规划失败也记录成一轮对话，不对用户隐瞒失败。"""
-    # 必须在下发之前取：agent.run 内部会执行工具，工具落库时会顺带把 record.revision 顶上去，
+    """规划一轮指令并落库。多步计划先停住等确认，单步直接开跑。
+
+    规划失败也记录成一轮对话，不对用户隐瞒失败。
+    """
+    # 必须在下发之前取：工具执行落库时会顺带把 record.revision 顶上去，
     # 事后取就记成改完之后的号，这轮对话就对不上它发出时的画布了
     revision = record.revision
-    reply, plan, error = "", [], None
+    reply, steps, error = "", [], None
 
     try:
-        # 这三样是工具执行时需要的上下文（读素材的归属、往哪个会话里写），由 graph 在下发时取用
-        deps = agent.AgentDeps(session=session, user_id=record.user_id, session_id=record.id)
-        reply, plan = await agent.run(goal, await describe(session, record), deps)
+        reply, steps = await agent.run(goal, await describe(session, record))
     except agent.PlannerUnavailable as exc:
         # 模型没配或调不通，异常信息本身可以给用户看（如「未配置模型」），原样带出去
         error = str(exc)
@@ -65,6 +87,18 @@ async def respond(session: AsyncSession, record: EditSession, goal: str) -> Agen
         await session.rollback()
         error = "规划失败，请重试"
 
+    if error:
+        status = RunStatus.FAILED
+    elif plan_mod.needs_confirm(steps):
+        # 多步计划整轮停在排队，等用户点「执行计划」；步骤此时还没有 run_id
+        status = RunStatus.QUEUED
+        reply = reply or "将按以下步骤执行，确认后开始。"
+    elif steps:
+        status = RunStatus.RUNNING
+    else:
+        # 模型判定这条指令与修图无关，只回了一句话
+        status = RunStatus.SUCCEEDED
+
     # 失败也落库：对话历史要完整，前端据此显示这一轮失败了以及失败原因
     turn = AgentRun(
         user_id=record.user_id,
@@ -72,15 +106,93 @@ async def respond(session: AsyncSession, record: EditSession, goal: str) -> Agen
         revision=revision,
         goal=goal,
         reply=reply,
-        # 存的是校验并执行后的计划，每步带 run_id，前端拿它订阅 SSE 看进度
-        plan=plan,
-        status=RunStatus.FAILED if error else RunStatus.SUCCEEDED,
+        # 存的是校验后的计划，每步带状态与 run_id，前端据此渲染步骤卡片
+        plan=steps,
+        status=status,
         error=error,
     )
     session.add(turn)
     await session.commit()
     await session.refresh(turn)
+
+    if turn.status is RunStatus.RUNNING:
+        await _advance(session, turn)
     return turn
+
+
+async def confirm(session: AsyncSession, record: EditSession, turn_id: uuid.UUID) -> AgentRun:
+    """用户点了「执行计划」：把停在待确认的步骤放行，继续推进整轮。"""
+
+    turn = await _get(session, record, turn_id)
+    steps = _copy(turn.plan)
+    waiting = [step for step in steps if step["status"] == plan_mod.WAITING]
+    if turn.status is not RunStatus.QUEUED and not waiting:
+        raise CannotConfirm
+    for step in waiting:
+        step["status"] = plan_mod.PENDING
+        # 记一次批准：这一轮里同类工具后续不再重复问
+        step["approved"] = True
+    turn.plan = steps
+    turn.status = RunStatus.RUNNING
+    _touch(turn)
+    await session.commit()
+    return await _advance(session, turn)
+
+
+async def cancel(session: AsyncSession, record: EditSession, turn_id: uuid.UUID) -> AgentRun:
+    """取消整轮：没开跑的步骤标成已取消，排队中的 run 一并结掉。"""
+
+    turn = await _get(session, record, turn_id)
+    if turn.status.is_terminal:
+        raise CannotCancel
+    turn.plan = plan_mod.cancel_remaining(_copy(turn.plan))
+    await _cancel_queued_runs(session, turn.plan)
+    _touch(turn)
+    turn.status = RunStatus(plan_mod.settle(turn.plan))
+    await session.commit()
+    await session.refresh(turn)
+    return turn
+
+
+async def retry(session: AsyncSession, record: EditSession, turn_id: uuid.UUID) -> AgentRun:
+    """只重跑最后一个失败步骤，前面的成果不浪费。"""
+
+    turn = await _get(session, record, turn_id)
+    steps = _copy(turn.plan)
+    failed = next((step for step in reversed(steps) if step["status"] == plan_mod.FAILED), None)
+    if failed is None:
+        raise CannotRetry
+    failed["run_id"] = None
+    failed["status"] = plan_mod.PENDING
+    turn.plan = steps
+    turn.status = RunStatus.RUNNING
+    turn.error = None
+    _touch(turn)
+    await session.commit()
+    return await _advance(session, turn)
+
+
+async def continue_plan(session: AsyncSession, run: ToolRun) -> None:
+    """某一步结束后推进后续依赖，刷新后也能从已落库的计划接着跑。
+
+    计划即断点：步骤状态每落一步就写库，worker 重启或用户切走再回来，
+    都能按库里的进度继续，而不是整轮重跑或卡住。
+    """
+
+    if run.session_id is None:
+        return
+    turn = await _turn_of_run(session, run)
+    if turn is None:
+        return
+
+    steps = _copy(turn.plan)
+    for step in steps:
+        if step.get("run_id") == str(run.id):
+            step["status"] = run.status.value
+    turn.plan = steps
+    _touch(turn)
+    await session.commit()
+    await _advance(session, turn)
 
 
 async def turns_of(session: AsyncSession, record: EditSession, limit: int = 50) -> list[AgentRun]:
@@ -93,3 +205,92 @@ async def turns_of(session: AsyncSession, record: EditSession, limit: int = 50) 
         .limit(limit)
     )
     return list(result)
+
+
+async def _advance(session: AsyncSession, turn: AgentRun) -> AgentRun:
+    """反复下发「依赖已满足」的步骤，直到没有可推进的为止。
+
+    画布类工具当场就成功，循环会立刻带出下一步；像素类工具入队后状态还是
+    queued，本轮先停在这里，等 worker 跑完回调 continue_plan 再推进。
+    """
+
+    steps = _copy(turn.plan)
+    progressed = True
+    while progressed:
+        progressed = False
+        for step in plan_mod.ready(steps):
+            if spec_of(step["tool"]).needs_approval and not step.get("approved"):
+                # 需要用户点头的工具（花钱调模型的那类）不擅自执行
+                step["status"] = plan_mod.WAITING
+                continue
+            run = await tools.submit(
+                session, turn.user_id, step["tool"], step["params"], turn.session_id
+            )
+            step["run_id"] = str(run.id)
+            step["status"] = run.status.value
+            turn.plan = steps
+            turn.status = RunStatus.RUNNING
+            _touch(turn)
+            await session.commit()
+            progressed = run.status is RunStatus.SUCCEEDED
+
+    turn.plan = steps
+    turn.status = RunStatus(plan_mod.settle(steps))
+    waiting = any(step["status"] == plan_mod.WAITING for step in steps)
+    if turn.status is RunStatus.QUEUED and waiting:
+        turn.reply = turn.reply or "下一步需要确认后再执行。"
+    _touch(turn)
+    await session.commit()
+    await session.refresh(turn)
+    return turn
+
+
+async def _cancel_queued_runs(session: AsyncSession, steps: list[dict]) -> None:
+    """把还排在队列里的 run 结掉，避免 worker 之后又去执行已取消的步骤。"""
+
+    for step in steps:
+        if not step.get("run_id") or step["status"] != plan_mod.QUEUED:
+            continue
+        run = await session.get(ToolRun, uuid.UUID(step["run_id"]))
+        if run is None or run.status is not RunStatus.QUEUED:
+            continue
+        await runs.finish(session, run, status=RunStatus.CANCELED, error="已取消")
+        step["status"] = plan_mod.CANCELED
+
+
+async def _get(session: AsyncSession, record: EditSession, turn_id: uuid.UUID) -> AgentRun:
+    turn = await session.scalar(
+        select(AgentRun).where(AgentRun.id == turn_id, AgentRun.session_id == record.id)
+    )
+    if turn is None:
+        raise TurnNotFound
+    return turn
+
+
+async def _turn_of_run(session: AsyncSession, run: ToolRun) -> AgentRun | None:
+    """反查一个 ToolRun 属于哪轮计划的哪一步。只在最近的对话里找。"""
+
+    turns = await session.scalars(
+        select(AgentRun)
+        .where(AgentRun.session_id == run.session_id)
+        .order_by(AgentRun.created_at.desc())
+        .limit(20)
+    )
+    run_id = str(run.id)
+    for turn in turns:
+        if any(step.get("run_id") == run_id for step in turn.plan):
+            return turn
+    return None
+
+
+def _copy(steps: list) -> list[dict]:
+    """浅拷贝一份步骤列表。JSONB 列要整体重新赋值才会被标记为已修改。"""
+
+    return [dict(step) for step in steps]
+
+
+def _touch(turn: AgentRun) -> None:
+    """显式标记 plan 已改动。原地改字典内容 SQLAlchemy 察觉不到。"""
+
+    flag_modified(turn, "plan")
+

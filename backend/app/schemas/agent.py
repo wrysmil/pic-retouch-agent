@@ -26,19 +26,31 @@ class MessageIn(BaseModel):
 
 
 class PlanStepOut(BaseModel):
-    """计划中的一步：调用哪个工具、模型给出的中文说法、以及投递后的执行记录。"""
+    """计划中的一步：调用哪个工具、依赖哪几步、当前状态与执行记录。"""
 
+    id: str
     tool: str
     label: str
+    depends_on: list[str] = []
     run_id: uuid.UUID | None = None
+    status: str = "pending"
 
     @classmethod
     def of(cls, step: dict) -> "PlanStepOut":
-        return cls(tool=step["tool"], label=label_of(step["tool"]), run_id=step.get("run_id"))
+        run_id = step.get("run_id")
+        return cls(
+            id=step.get("id") or step["tool"],
+            tool=step["tool"],
+            label=label_of(step["tool"]),
+            depends_on=list(step.get("depends_on") or []),
+            run_id=uuid.UUID(run_id) if run_id else None,
+            # 老数据没有 status 字段：有 run_id 就当已完成，否则待执行
+            status=step.get("status") or ("succeeded" if run_id else "pending"),
+        )
 
 
 class TurnOut(BaseModel):
-    """编辑页左栏的一轮问答。status 只反映规划是否成功，步骤进度在各步骤的 run 里。"""
+    """编辑页左栏的一轮问答。status 是整轮计划的汇总，单步进度在 steps 里。"""
 
     id: uuid.UUID
     revision: int

@@ -104,6 +104,12 @@ async def execute(session: AsyncSession, run: ToolRun) -> None:
     else:
         await runs.finish(session, run, status=RunStatus.SUCCEEDED, result=result)
 
+    # 这一步属于某轮多步计划时，按计划推进后续依赖。放在最后且用局部导入：
+    # agent 服务本身要调 submit，模块级互相引用会成环
+    from app.services import agent as agent_service
+
+    await agent_service.continue_plan(session, run)
+
 
 async def _record(session: AsyncSession, run: ToolRun, result: dict) -> None:
     """把工具产物并入会话：改文档/切换当前图走 apply_edit，只产出则进图片墙。

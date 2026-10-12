@@ -30,6 +30,7 @@ from app.schemas.session import (
 from app.services import agent as agent_service
 from app.services import assets as asset_service
 from app.services import selections, sessions, tools
+from app.services.agent import CannotCancel, CannotConfirm, CannotRetry, TurnNotFound
 from app.services.selections import EmptySelection, StaleSelection
 from app.services.sessions import CannotRedo, CannotUndo, SessionNotFound
 from app.services.tools import InvalidParams
@@ -428,9 +429,80 @@ async def send_message(
 
     **返回**: 本轮对话（TurnOut），含规划结果与已投递的工具步骤
 
-    - 指令会被规划模型解析为至多一个工具步骤，服务端校验后下发执行
+    - 指令会被规划模型解析为至多 8 步的工具计划，服务端校验后落库
+    - 单步计划直接开跑；多步计划先停在 status=queued，等用户调 confirm 确认
     - 指令与修图无关时返回一句中文说明，不调用任何工具
     - 规划模型未配置时明确失败（status=failed），不会伪造成功结果
     """
     record = await _load(session, user, session_id)
     return TurnOut.of(await agent_service.respond(session, record, payload.text))
+
+
+@router.post(
+    "/{session_id}/messages/{turn_id}/confirm",
+    summary="确认执行计划",
+    description="放行停在待确认的多步计划或需要批准的步骤，继续按计划推进。",
+)
+async def confirm_plan(
+    session_id: uuid.UUID, turn_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> TurnOut:
+    """
+    确认并执行一轮计划。
+
+    - **turn_id**: 对话轮次 UUID
+    - **返回**: 更新后的本轮对话（TurnOut）
+    - 当前没有待确认步骤时返回 409，对话不存在返回 404
+    """
+    record = await _load(session, user, session_id)
+    try:
+        return TurnOut.of(await agent_service.confirm(session, record, turn_id))
+    except TurnNotFound as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "对话不存在") from exc
+    except CannotConfirm as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, "当前没有待确认的步骤") from exc
+
+
+@router.post(
+    "/{session_id}/messages/{turn_id}/cancel",
+    summary="取消计划",
+    description="取消一轮计划里尚未开跑的步骤，排队中的工具任务一并结掉。",
+)
+async def cancel_plan(
+    session_id: uuid.UUID, turn_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> TurnOut:
+    """
+    取消一轮计划。
+
+    - 已在执行或已结束的轮次无法取消，返回 409
+    - 只取消未开跑的步骤，正在跑的那一步不打断
+    """
+    record = await _load(session, user, session_id)
+    try:
+        return TurnOut.of(await agent_service.cancel(session, record, turn_id))
+    except TurnNotFound as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "对话不存在") from exc
+    except CannotCancel as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, "当前没有可取消的步骤") from exc
+
+
+@router.post(
+    "/{session_id}/messages/{turn_id}/retry",
+    summary="重试失败步骤",
+    description="重跑一轮计划里最后一个失败的步骤，已成功的步骤不重复执行。",
+)
+async def retry_plan(
+    session_id: uuid.UUID, turn_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> TurnOut:
+    """
+    重试失败步骤。
+
+    - 只重建最后一个失败步骤的工具任务，前面步骤的成果保留
+    - 没有失败步骤时返回 409
+    """
+    record = await _load(session, user, session_id)
+    try:
+        return TurnOut.of(await agent_service.retry(session, record, turn_id))
+    except TurnNotFound as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "对话不存在") from exc
+    except CannotRetry as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, "没有失败的步骤可重试") from exc
