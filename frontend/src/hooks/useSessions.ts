@@ -10,7 +10,7 @@ import {
 } from '@/api/sessions'
 import { errorMessage } from '@/hooks/useAuth'
 import { useRun } from '@/hooks/useRun'
-import { useEditorUi } from '@/stores/editorUi'
+import { offersUndo, toolLabel } from '@/lib/tools'
 import { toast } from '@/stores/toasts'
 
 const LIST_KEY = ['sessions']
@@ -78,14 +78,6 @@ export function useSessionTools(id: string) {
   const [pendingRunId, setPendingRunId] = useState<string | null>(null)
   const live = useRun(pendingRunId)
 
-  useEffect(() => {
-    if (!pendingRunId || !live.status || !isTerminal(live.status)) return
-    void queryClient.invalidateQueries({ queryKey: detailKey(id) })
-    void queryClient.invalidateQueries({ queryKey: historyKey(id) })
-    if (live.status === 'failed') toast(live.error || '处理失败', 'danger')
-    else toast(live.stage || '已完成')
-  }, [pendingRunId, live.status, live.error, live.stage, id, queryClient])
-
   const invoke = useMutation({
     mutationFn: ({ tool, params }: { tool: string; params?: Record<string, unknown> }) =>
       sessionsApi.invoke(id, tool, params),
@@ -118,6 +110,33 @@ export function useSessionTools(id: string) {
   const waiting = Boolean(pendingRunId && (!live.status || !isTerminal(live.status)))
   const busy = invoke.isPending || undo.isPending || redo.isPending || waiting
 
+  // 提示里的撤销要在完成那一刻才可用，用 ref 拿最新的 mutation，避免把它塞进 effect 依赖
+  const undoRef = useRef(() => undo.mutate())
+  undoRef.current = () => undo.mutate()
+  const pendingTool = invoke.variables?.tool
+  // 一个任务只播报一次，后续依赖变化不会再弹提示
+  const announced = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!pendingRunId || !live.status || !isTerminal(live.status)) return
+    if (announced.current === pendingRunId) return
+    announced.current = pendingRunId
+    void queryClient.invalidateQueries({ queryKey: detailKey(id) })
+    void queryClient.invalidateQueries({ queryKey: historyKey(id) })
+    if (live.status === 'failed') {
+      toast(live.error || '处理失败', 'danger')
+      return
+    }
+    const label = toolLabel(pendingTool)
+    toast(
+      label ? `${label}完成` : live.stage || '已完成',
+      'ok',
+      offersUndo(pendingTool)
+        ? { action: { label: '撤销', run: () => undoRef.current() } }
+        : undefined,
+    )
+  }, [pendingRunId, live.status, live.error, live.stage, pendingTool, id, queryClient])
+
   /**
    * 当前在跑的是不是这一次调用。工具层同时只跑一个任务，界面据此只给发起的那个按钮
    * 换进度文案，其余按钮虽然一样禁用，但不会看起来像是也在生成。
@@ -135,15 +154,12 @@ export function useSessionTools(id: string) {
   }
 
   return {
-    invoke: (tool: string, params?: Record<string, unknown>) => {
-      // 确认按钮只武装自己这一个动作，换工具就得先解除武装
-      useEditorUi.getState().setConfirming(null)
-      invoke.mutate({ tool, params })
-    },
+    invoke: (tool: string, params?: Record<string, unknown>) => invoke.mutate({ tool, params }),
     undo: () => runHistory(() => undo.mutate()),
     redo: () => runHistory(() => redo.mutate()),
     busy,
     isRunning,
+    pending: waiting,
     pendingStage: waiting ? live.stage : '',
     pendingProgress: waiting ? live.progress : 0,
   }
