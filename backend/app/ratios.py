@@ -37,3 +37,19 @@ def cover_size(width: int, height: int, ratio: Ratio) -> tuple[int, int]:
     if width * rh >= height * rw:
         return width, max(1, int(width * rh / rw))
     return max(1, int(height * rw / rh)), height
+
+
+def matches_ratio(width: int, height: int, ratio: Ratio) -> bool:
+    rw, rh = parts_of(ratio)
+    return width * rh == height * rw
+
+
+def ratio_of(width: int, height: int) -> Ratio | None:
+    """反查像素尺寸对应的投放比例，先命中标准尺寸，再按等比判定。"""
+    for ratio, size in SIZES.items():
+        if (width, height) == size:
+            return ratio
+    for ratio in Ratio:
+        if matches_ratio(width, height, ratio):
+            return ratio
+    return None
