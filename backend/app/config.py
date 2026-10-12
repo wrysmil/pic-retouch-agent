@@ -23,6 +23,8 @@ class Settings(BaseSettings):
 
     # S3/MinIO 对象存储服务地址
     s3_endpoint: str = "http://localhost:7313"
+    # 浏览器打开签名 URL 的地址；空则与 s3_endpoint 相同
+    s3_public_endpoint: str = ""
     # S3 访问密钥 ID
     s3_access_key: str = "retouch"
     # S3 访问密钥 Secret
