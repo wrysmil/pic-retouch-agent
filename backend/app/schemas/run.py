@@ -74,6 +74,7 @@ class RunOut(BaseModel):
     prompt: str | None = None
     session_id: uuid.UUID | None = None
     candidates: list[AssetOut] = []
+    result: dict = {}
 
     @classmethod
     def of(cls, run: ToolRun, candidates: list[AssetOut] | None = None) -> "RunOut":
@@ -87,4 +88,5 @@ class RunOut(BaseModel):
             prompt=run.params.get("prompt"),
             session_id=run.session_id,
             candidates=candidates or [],
+            result=run.result or {},
         )

@@ -35,6 +35,7 @@ def snapshot(run: ToolRun) -> dict:
         "progress": run.progress,
         "stage": run.stage,
         "error": run.error,
+        "result": run.result or {},
     }
 
 
@@ -123,7 +124,13 @@ async def start(session: AsyncSession, run: ToolRun) -> None:
     await _commit(session, run)
 
 
-async def report(session: AsyncSession, run: ToolRun, progress: int, stage: str) -> None:
+async def report(
+    session: AsyncSession,
+    run: ToolRun,
+    progress: int,
+    stage: str,
+    result: dict | None = None,
+) -> None:
     """
     报告任务进度。
 
@@ -131,10 +138,13 @@ async def report(session: AsyncSession, run: ToolRun, progress: int, stage: str)
     - **run**: 任务记录
     - **progress**: 进度百分比（0-100）
     - **stage**: 当前阶段描述（如 "正在生成"、"保存候选图"）
+    - **result**: 可选，边跑边写的中间结果（如批量任务逐项进度）
     - **效果**: 更新进度和阶段描述，发布事件
     """
     run.progress = max(run.progress, progress)
     run.stage = stage
+    if result is not None:
+        run.result = result
     await _commit(session, run)
 
 
