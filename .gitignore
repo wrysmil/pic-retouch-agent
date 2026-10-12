@@ -5,6 +5,9 @@
 *.key
 
 
+# 用户评测素材
+evals/
+
 # Python
 __pycache__/
 *.py[cod]
