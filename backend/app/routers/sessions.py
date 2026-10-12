@@ -200,6 +200,19 @@ async def _selection_out(session: AsyncSession, user: User, payload: dict) -> Se
 
 
 @router.post(
+    "/{session_id}/selection/prepare",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="预热选区",
+    description="进入点选前先算整图 embedding，真正点击只跑 decoder，消除首点冷启动卡顿。",
+)
+async def prepare_selection(
+    session_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> None:
+    record = await _load(session, user, session_id)
+    await selections.prepare(session, record)
+
+
+@router.post(
     "/{session_id}/selection",
     summary="建立选区",
     description="用点选标点或笔刷涂抹在当前画布上建立选区，可叠加。",
