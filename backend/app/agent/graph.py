@@ -7,7 +7,7 @@ from langgraph.graph import END, START, StateGraph
 from app.agent.llm import planner
 from app.agent.plan import PlanError, validate
 from app.services import tools as tool_service
-from app.tools import UnknownTool
+from app.tools import UnknownTool, label_of
 
 # 规划模型的系统提示词。{context} 由 services/agent.describe() 填当前画布摘要
 _SYSTEM = """你是电商图片修图助手，通过调用工具完成用户的修图请求。
@@ -16,15 +16,26 @@ _SYSTEM = """你是电商图片修图助手，通过调用工具完成用户的�
 - 只能使用已提供的工具。可以一次安排多步，按完成先后调用；后一步默认依赖前一步。
 - 能一步完成的不要拆成多步，最多 8 步。
 - 缺失参数用画布信息与常识补齐，可推断的参数不要反问用户。
-- 画布摘要标明已有选区时，局部消除/替换/提升为图层可直接调用，不要再让用户重选。
+- 图层与选区是两个独立维度：layer_id 决定改哪一层，选区决定改哪块区域。
+  用户点名了图层（如「物体2」「背景」「主体」）就把它的 id 或名字填进 layer_id。
+- 画布摘要标明已有选区时，那就是用户要改的物体：局部消除、替换、提升为图层
+  直接调用，不要再让用户重选，也不要猜测选区是否点准。没有选区也能调用，
+  此时作用在整个目标图层。
+- 一句话要改多个图层时，按图层拆成多步，每步只填一个 layer_id。
+- 改颜色、换材质、换成某物用 replace_region 并点名 layer_id；
+  只改整张背景才用 replace_background。adjust_image 只做明暗冷暖，不做改色。
+- 翻转画面用 flip_layer；说了角度用 rotate_layer。
 - 用户要求拆层、把物体独立成层时，使用 split_layers 或 promote_object_to_layer。
 - 拆层默认不拆文字，只有用户明确要求时才传 include_text。
-- 指令与修图无关，或现有工具做不到时，用一句中文说明原因，不要调用工具。
+- 调用工具时不要输出解释或工具名。只有指令与修图无关、或现有工具确实做不到时，
+  才用一句中文说明，不要提内部参数。
 
 当前画布：{context}"""
 
 # 模型可能只回 tool_calls 而没有正文（或反过来），此时需要一句能直接显示的话兜底
 _FALLBACK_REPLY = "没太理解这条指令，换个说法或说得更具体一些。"
+# 拒绝语只该是一句话，超出这个长度就当作模型开始讲道理了，截掉
+_REFUSAL_LIMIT = 60
 
 
 class AgentState(TypedDict):
@@ -93,7 +104,37 @@ async def run(goal: str, context: str) -> tuple[str, list[dict]]:
     """
 
     state = await _graph().ainvoke({"goal": goal, "context": context, "plan": [], "reply": ""})
-    return state["reply"] or _FALLBACK_REPLY, state["plan"]
+    return spoken(state["reply"], state["plan"]), state["plan"]
+
+
+def spoken(reply: str, plan: list[dict]) -> str:
+    """有计划就按步骤说话；没计划才用兜底或截成一句拒绝。
+
+    模型有时会边调工具边讲解，甚至把参数名说出来，那些话对用户没有信息量。
+    步骤标签本身就是最准确的说明。
+    """
+
+    text = (reply or "").strip()
+    if plan:
+        if text and text != _FALLBACK_REPLY:
+            return text
+        labels = "、".join(label_of(step["tool"]) for step in plan)
+        if len(plan) > 1:
+            return f"将按以下步骤执行：{labels}。确认后开始。"
+        return f"好，正在{labels}。"
+    return _one_sentence(text) if text else _FALLBACK_REPLY
+
+
+def _one_sentence(text: str) -> str:
+    """取正文的第一句。中文句号、感叹号、问号与换行都算断句。"""
+
+    for sep in ("。", "！", "？", "\n"):
+        head, found, _ = text.partition(sep)
+        if found and head.strip():
+            return head.strip() + (sep if sep != "\n" else "。")
+    if len(text) > _REFUSAL_LIMIT:
+        return text[:_REFUSAL_LIMIT].rstrip() + "…"
+    return text
 
 
 def _text_of(message: AIMessage) -> str:
