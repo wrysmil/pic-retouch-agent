@@ -15,6 +15,7 @@ export type Run = {
   prompt: string | null
   session_id: string | null
   candidates: Asset[]
+  result: Record<string, unknown>
 }
 
 export type GenerateInput = {
