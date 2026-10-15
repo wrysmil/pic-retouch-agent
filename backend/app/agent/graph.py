@@ -2,9 +2,10 @@ from functools import lru_cache
 from typing import TypedDict
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
-from app.agent.llm import planner
+from app.agent.llm import bind_tools
 from app.agent.plan import PlanError, validate
 from app.services import tools as tool_service
 from app.tools import UnknownTool, label_of
@@ -54,6 +55,8 @@ class AgentState(TypedDict):
 
     goal: str
     context: str
+    # 运行时由 services/agent 注入；节点用它调模型。把它放进 state 是为了让图保持纯函数风格
+    planner: ChatOpenAI
     plan: list[dict]
     reply: str
 
@@ -62,7 +65,7 @@ async def _plan(state: AgentState) -> AgentState:
     """调模型规划一轮：把画布摘要与用户指令一次性发给它，拿回工具调用。"""
 
     # 每次都是全新的两条消息，不带历史，模型对上一轮无记忆
-    message = await planner().ainvoke(
+    message = await state["planner"].ainvoke(
         [
             SystemMessage(_SYSTEM.format(context=state["context"])),
             HumanMessage(state["goal"]),
@@ -103,14 +106,17 @@ def _graph():
     return builder.compile()
 
 
-async def run(goal: str, context: str) -> tuple[str, list[dict]]:
+async def run(goal: str, context: str, planner: ChatOpenAI) -> tuple[str, list[dict]]:
     """规划并校验一轮指令，返回答复与尚未下发的计划。
 
-    图里不再下发工具：计划要先落库，多步时停住等用户确认，
-    真正的执行由 services/agent 按依赖逐步推进。
+    planner 来自 services/model_runtime，绑定到具体已发布的连接 + 模型版本，
+    同一轮内的所有步骤共用同一个版本引用。
     """
 
-    state = await _graph().ainvoke({"goal": goal, "context": context, "plan": [], "reply": ""})
+    bound = bind_tools(planner)
+    state = await _graph().ainvoke(
+        {"goal": goal, "context": context, "planner": bound, "plan": [], "reply": ""}
+    )
     return spoken(state["reply"], state["plan"]), state["plan"]
 
 

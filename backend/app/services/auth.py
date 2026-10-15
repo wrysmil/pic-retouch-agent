@@ -6,6 +6,7 @@
 """
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +28,12 @@ class InvalidCredentials(Exception):
     pass
 
 
+class AccountDisabled(Exception):
+    """账号已被停用"""
+
+    pass
+
+
 async def register(session: AsyncSession, username: str, password: str) -> User:
     """
     注册新用户。
@@ -37,7 +44,12 @@ async def register(session: AsyncSession, username: str, password: str) -> User:
     - **返回**: 创建的用户记录
     - **抛出**: UsernameTaken 用户名已被占用
     """
-    user = User(username=username, password_hash=hash_password(password))
+    now = datetime.now(UTC)
+    user = User(
+        username=username,
+        password_hash=hash_password(password),
+        password_changed_at=now,
+    )
     session.add(user)
     try:
         await session.commit()
@@ -55,11 +67,16 @@ async def authenticate(session: AsyncSession, username: str, password: str) -> U
     - **username**: 用户名
     - **password**: 明文密码
     - **返回**: 验证通过的用户记录
-    - **抛出**: InvalidCredentials 用户名不存在或密码错误
+    - **抛出**: InvalidCredentials 用户名或密码错误；AccountDisabled 账号已停用
     """
     user = await session.scalar(select(User).where(User.username == username))
     if user is None or not verify_password(password, user.password_hash):
         raise InvalidCredentials
+    if not user.is_active:
+        # 区分禁用与密码错：禁用是预期内状态，对外报"账号已停用"更友好
+        raise AccountDisabled
+    user.last_login_at = datetime.now(UTC)
+    await session.commit()
     return user
 
 

@@ -30,3 +30,10 @@ class AgentRun(UUIDBase):
     plan: Mapped[list] = mapped_column(JSONB, default=list)
     status: Mapped[RunStatus] = mapped_column(enum_column(RunStatus))
     error: Mapped[str | None] = mapped_column(Text, default=None)
+    # 锁定的运行模型配置版本 id；为空说明此轮早于发布机制，仍可继续完成
+    runtime_config_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("runtime_config_versions.id", ondelete="RESTRICT"),
+        default=None,
+        index=True,
+    )

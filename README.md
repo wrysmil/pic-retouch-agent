@@ -14,10 +14,12 @@
 cp .env.example .env
 ```
 
-默认 `IMAGE_PROVIDER=mock`，使用本地占位图。接百炼时改为 `dashscope` 并填写 `DASHSCOPE_API_KEY`。生产环境必须替换 `JWT_SECRET`。
+AI 模型（规划 / 文生图 / 图编辑）不再从环境变量读取：启动后登录后台「模型配置」，登记厂商连接与模型并发布运行版本，任务提交时会锁定该版本。生产环境必须替换 `JWT_SECRET`，并设置 `SECRET_ENC_KEY`（Fernet，32 字节）用于加密厂商密钥。
 
 | 变量 | 说明 |
 | --- | --- |
+| `SECRET_ENC_KEY` | 加密后台登记的厂商 API Key；未设置时无法保存密钥 |
+| `ALLOWED_PROVIDER_HOSTS` | 后台可登记的厂商 base URL 白名单；开发期本地放行填 `allow-localhost` |
 | `MATTING_PROVIDER` | `auto` 优先 rembg，`corner` 仅四角抠图 |
 | `OCR_PROVIDER` | `auto` 有 rapidocr 则拆文字层，`none` 跳过 |
 | `S3_PUBLIC_ENDPOINT` | 浏览器访问签名 URL 的地址；空则与 `S3_ENDPOINT` 相同 |

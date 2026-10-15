@@ -50,6 +50,8 @@ async def submit(
     tool: str,
     params: dict,
     session_id: uuid.UUID | None = None,
+    *,
+    runtime_config_version_id: uuid.UUID | None = None,
 ) -> ToolRun:
     """校验参数并投递执行：画布工具当场执行，像素工具入队。
 
@@ -58,14 +60,37 @@ async def submit(
 
     返回的 ToolRun 已带上终态：画布工具当场跑完才返回，像素工具返回时
     还在排队，前端拿它的 id 去订阅 SSE 进度。
+
+    runtime_config_version_id：调用方已确定版本时显式传入；否则按当前发布版本解析。
+    已下发的工具入队后即固定版本，与后续发布无关。
     """
     spec = spec_of(tool)
     # 投递前的前置检查。执行期还有一道兜底，见 tools/context.py 的 require_session
     if spec.session_required and session_id is None:
         raise InvalidParams("此工具需要在编辑会话中使用")
 
+    if runtime_config_version_id is None:
+        # 自动锁定当前发布版本；尚未发布时由上游决定如何提示用户
+        from app.services.model_config import get_current_version
+        from app.services.model_runtime import RuntimeMissing
+
+        try:
+            current = await get_current_version(session)
+        except Exception as exc:  # pragma: no cover - 数据库层异常向上冒
+            raise InvalidParams("无法解析当前运行配置") from exc
+        if current is None:
+            raise InvalidParams("尚未配置模型运行配置，无法提交任务")
+        runtime_config_version_id = current.id
+
     # 创建 ToolRun 记录，用来任务跟踪进度、失败原因、耗时统计、历史列表
-    run = await runs.create(session, user_id, tool, validate(tool, params), session_id)
+    run = await runs.create(
+        session,
+        user_id,
+        tool,
+        validate(tool, params),
+        session_id,
+        runtime_config_version_id=runtime_config_version_id,
+    )
     if spec.queued:
         # 像素类工具：耗时从秒到分钟，不能占着 HTTP 请求干等，入队交给 worker
         # ← 只把 id 塞进队列

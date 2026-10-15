@@ -39,26 +39,36 @@ class Settings(BaseSettings):
     # JWT 过期时间，小时
     jwt_ttl_hours: int = 24
 
-    # 文生图/图生图 provider: mock | dashscope
-    image_provider: str = "mock"
-    # 阿里云百炼 DashScope API Key
-    dashscope_api_key: str = ""
-    # 可改为业务空间专属域名 https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com
-    dashscope_base_url: str = "https://dashscope.aliyuncs.com"
-    # 文生图模型名
-    text_to_image_model: str = "qwen-image-3.0-pro"
-    # 图生图（图像编辑）模型名
-    image_edit_model: str = "qwen-image-edit-max"
-    # 智能规划（文案/脚本生成）模型名
-    planner_model: str = "qwen-plus"
+    # AI 模型（规划 / 文生图 / 图编辑）不再从环境变量读取，统一由后台「模型配置」
+    # 发布运行版本后，经 services.model_runtime 按版本解析连接与密钥。
+
     # 抠图 provider: auto（有 rembg 用 rembg，否则四角抠图）| rembg | corner（测试强制）
     matting_provider: str = "auto"
     # 文字识别 provider: auto（有 rapidocr 则拆出文字层）| rapidocr | none（测试强制）
     ocr_provider: str = "auto"
 
+    # 厂商 API Key 加密主密钥（Fernet url-safe base64，32 字节）。
+    # 未设置时禁用密钥持久化：连接仍可登记，但保存时立即报错。
+    secret_enc_key: str = ""
+
+    # 管理员通过后台保存的厂商 base URL 白名单（逗号分隔）。
+    # 列表外的地址直接拒绝，避免把内部地址 / 第三方任意域名配入。
+    # 设 "allow-localhost" 单独开启开发期本地放行。
+    allowed_provider_hosts: str = "api.openai.com,dashscope.aliyuncs.com"
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"
+
+    @property
+    def allow_local_provider_hosts(self) -> bool:
+        return self.allowed_provider_hosts.strip().lower() == "allow-localhost"
+
+    @property
+    def provider_host_allowlist(self) -> set[str]:
+        if self.allow_local_provider_hosts:
+            return set()
+        return {host.strip().lower() for host in self.allowed_provider_hosts.split(",") if host.strip()}
 
     @property
     def frontend_dist(self) -> Path:

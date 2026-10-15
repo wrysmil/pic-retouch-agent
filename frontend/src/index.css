@@ -106,6 +106,42 @@
   }
 }
 
+/* 后台管理自成一套「企业蓝·数据密集」设计系统，用 ad- 前缀与工作台隔离，互不影响 */
+@theme {
+  --color-ad-canvas: #eef2f7;
+  --color-ad-surface: #ffffff;
+  --color-ad-surface-2: #f6f8fc;
+  --color-ad-surface-3: #eef2f8;
+  --color-ad-border: #e2e8f0;
+  --color-ad-border-strong: #cbd5e1;
+  --color-ad-ink: #0f172a;
+  --color-ad-muted: #475569;
+  --color-ad-faint: #94a3b8;
+  --color-ad-primary: #1d4ed8;
+  --color-ad-primary-dark: #1e40af;
+  --color-ad-primary-soft: #dbeafe;
+  --color-ad-accent: #d97706;
+  --color-ad-accent-soft: #fef3c7;
+  --color-ad-success: #16a34a;
+  --color-ad-success-soft: #dcfce7;
+  --color-ad-danger: #dc2626;
+  --color-ad-danger-soft: #fee2e2;
+  --color-ad-sidebar: #0d1b3e;
+  --color-ad-sidebar-2: #16264f;
+  --color-ad-sidebar-ink: #cbd5e1;
+  --color-ad-sidebar-faint: #7c8db5;
+
+  --font-ad-mono:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --radius-ad: 12px;
+  --radius-ad-sm: 8px;
+  --radius-ad-xs: 6px;
+
+  --shadow-ad-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 4px 14px -6px rgb(15 23 42 / 0.12);
+  --shadow-ad-pop: 0 12px 32px -8px rgb(15 23 42 / 0.28);
+}
+
 @layer base {
   html {
     -webkit-font-smoothing: antialiased;

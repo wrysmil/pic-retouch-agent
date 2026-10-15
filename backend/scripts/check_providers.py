@@ -1,7 +1,8 @@
-"""连通性自检：基础设施、图像 provider、规划模型、抠图 provider 各跑一次最小调用。
+"""连通性自检：基础设施、图像模型、规划模型、抠图各跑一次最小调用。
 
-只发最小请求：图像 1 张 512×512，规划 1 条短指令。真实调用会产生费用，
-未配置 key 的项报 SKIP 而不是 FAIL，因为那是预期状态而非故障。
+AI 模型（规划 / 文生图 / 图编辑）一律走后台「模型配置」发布的运行版本，
+经 services.model_runtime 解析，不再读环境变量。尚未发布运行版本时报 SKIP，
+因为那是预期状态而非故障。真实调用会产生费用，只发最小请求。
 
     python scripts/check_providers.py
 """
@@ -17,10 +18,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from langchain_core.messages import HumanMessage
 from sqlalchemy import text
 
-from app.agent.llm import PlannerUnavailable, planner
+from app.agent.llm import bind_tools
 from app.config import get_settings
+from app.db import SessionFactory
 from app.edits.pixels import remove_background
-from app.providers import GenerateRequest, ProviderError, get_image_provider
+from app.providers import GenerateRequest, ProviderError
+from app.services import model_config
+from app.services.model_runtime import (
+    IncompatibleRuntime,
+    RuntimeMissing,
+    get_image_client,
+    get_planner,
+)
 
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
@@ -36,7 +45,6 @@ async def check_storage() -> None:
     """API 用到的三样外部依赖，逐个打一次真实连接。"""
 
     from app import storage
-    from app.db import SessionFactory
 
     try:
         async with SessionFactory() as session:
@@ -65,46 +73,45 @@ async def check_storage() -> None:
         _record(FAIL, "minio", f"{type(exc).__name__}: {exc}")
 
 
-async def check_image_provider() -> None:
-    """按 IMAGE_PROVIDER 发一次真实出图请求；未配置 key 时报 SKIP。"""
+async def check_runtime() -> None:
+    """按后台发布的当前运行版本，各调一次规划模型与文生图。"""
+    async with SessionFactory() as session:
+        version = await model_config.get_current_version(session)
+        if version is None:
+            _record(SKIP, "runtime", "尚未在后台发布运行配置，请先在「模型配置」中发布")
+            return
 
-    settings = get_settings()
-    if settings.image_provider == "dashscope" and not settings.dashscope_api_key:
-        _record(SKIP, "image", "IMAGE_PROVIDER=dashscope 但未配置 DASHSCOPE_API_KEY")
-        return
+        _record(PASS, "runtime", f"当前运行版本 v{version.version_seq}")
 
-    try:
-        provider = get_image_provider()
-        images = await provider.generate(GenerateRequest(prompt="一朵云", width=512, height=512))
-        size = len(images[0]) if images else 0
-        _record(PASS if images else FAIL, "image", f"provider={provider.name} 返回 {len(images)} 张，首张 {size} 字节")
-    except ProviderError as exc:
-        _record(FAIL, "image", f"ProviderError: {exc}")
-    except Exception as exc:
-        _record(FAIL, "image", f"{type(exc).__name__}: {exc}")
+        # 规划模型
+        try:
+            planner = await get_planner(session, version.id)
+            reply = await bind_tools(planner.client).ainvoke([HumanMessage("只回复：就绪")])
+            calls = getattr(reply, "tool_calls", [])
+            _record(PASS, "planner", f"model={planner.model_definition.vendor_model_id} 回复「{reply.content}」tool_calls={len(calls)}")
+        except (RuntimeMissing, IncompatibleRuntime) as exc:
+            _record(FAIL, "planner", f"{type(exc).__name__}: {exc}")
+        except Exception as exc:
+            _record(FAIL, "planner", f"{type(exc).__name__}: {exc}")
 
-
-async def check_planner() -> None:
-    """真实调一次规划模型，确认 key 有效且账号开通了 Function Calling。"""
-
-    settings = get_settings()
-    if not settings.dashscope_api_key:
-        _record(SKIP, "planner", "未配置 DASHSCOPE_API_KEY")
-        return
-
-    try:
-        model = planner()
-        reply = await model.ainvoke([HumanMessage("只回复：就绪")])
-        calls = getattr(reply, "tool_calls", [])
-        _record(
-            PASS,
-            "planner",
-            f"model={settings.planner_model} 回复「{reply.content}」tool_calls={len(calls)}",
-        )
-    except PlannerUnavailable as exc:
-        _record(FAIL, "planner", f"PlannerUnavailable: {exc}")
-    except Exception as exc:
-        _record(FAIL, "planner", f"{type(exc).__name__}: {exc}")
+        # 文生图
+        try:
+            image = await get_image_client(session, version.id)
+            images = await image.provider.generate(
+                GenerateRequest(prompt="一朵云", width=512, height=512, count=1)
+            )
+            size = len(images[0]) if images else 0
+            _record(
+                PASS if images else FAIL,
+                "image",
+                f"provider={image.provider.name} 返回 {len(images)} 张，首张 {size} 字节",
+            )
+        except ProviderError as exc:
+            _record(FAIL, "image", f"ProviderError: {exc}")
+        except (RuntimeMissing, IncompatibleRuntime) as exc:
+            _record(FAIL, "image", f"{type(exc).__name__}: {exc}")
+        except Exception as exc:
+            _record(FAIL, "image", f"{type(exc).__name__}: {exc}")
 
 
 def check_matting() -> None:
@@ -124,16 +131,8 @@ def check_matting() -> None:
 
 
 async def main() -> int:
-    settings = get_settings()
-    print(
-        f"配置：IMAGE_PROVIDER={settings.image_provider} "
-        f"TEXT_TO_IMAGE_MODEL={settings.text_to_image_model} "
-        f"PLANNER_MODEL={settings.planner_model}\n"
-    )
-
     await check_storage()
-    await check_image_provider()
-    await check_planner()
+    await check_runtime()
     check_matting()
 
     failed = [name for status, name, _ in _results if status == FAIL]

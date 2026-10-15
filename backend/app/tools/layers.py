@@ -27,8 +27,9 @@ from app.edits.split import (
 from app.layers import BACKGROUND_LAYER_ID, LayerKind
 from app.models.asset import Asset, AssetKind, AssetSource
 from app.models.tool_run import ToolRun
-from app.providers import EditRequest, get_image_provider
+from app.providers import EditRequest
 from app.services import assets, runs, selections
+from app.services.runtime_provider import image_client_for_run
 from app.tools.base import HIDDEN_MASK, MaskRef, ToolSpec
 from app.tools.context import ToolError, document_of, flatten_session, require_session
 from app.tools.target import require_selection
@@ -61,8 +62,9 @@ async def _fill_hole(session: AsyncSession, run: ToolRun, source: bytes, mask: b
     """
     hole = expand_mask(mask, Image.open(io.BytesIO(source)).size)
     prepared = await asyncio.to_thread(fill_background, source, hole)
+    client = await image_client_for_run(session, run)
     edited = (
-        await get_image_provider().edit(
+        await client.provider.edit(
             EditRequest(prompt=_RECONSTRUCT, image=prepared),
             on_progress=lambda progress, stage: runs.report(session, run, progress, stage),
         )

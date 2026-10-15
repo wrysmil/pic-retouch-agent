@@ -13,7 +13,8 @@ from app.edits.pixels import adjust, encode, letterbox, remove_background
 from app.models import Asset, ToolRun
 from app.models.asset import AssetKind, AssetSource
 from app.models.tool_run import RunStatus
-from app.providers import EditRequest, get_image_provider
+from app.providers import EditRequest
+from app.providers.base import ImageProvider
 from app.ratios import DELIVERY_RATIOS, Ratio, cover_size, size_of
 from app.schemas.asset import AssetOut
 from app.schemas.batch import BatchIn, BatchItemOut, BatchOpIn, BatchOut
@@ -43,7 +44,9 @@ def _unique_ratios(values: list[Ratio]) -> list[Ratio]:
     return seen
 
 
-async def apply_op(data: bytes, operation: BatchOpIn) -> list[bytes]:
+async def apply_op(
+    data: bytes, operation: BatchOpIn, provider: ImageProvider
+) -> list[bytes]:
     if operation.tool == "remove_background":
         return [await asyncio.to_thread(remove_background, data)]
     if operation.tool == "adjust_image":
@@ -53,10 +56,10 @@ async def apply_op(data: bytes, operation: BatchOpIn) -> list[bytes]:
         return [await asyncio.to_thread(lambda: adjust(data, **values))]
     if operation.tool == "upscale_image":
         scale = UpscaleImageIn.model_validate(operation.params).scale
-        return [await get_image_provider().upscale(data, scale)]
+        return [await provider.upscale(data, scale)]
     if operation.tool == "replace_background":
         parsed = ReplaceBackgroundIn.model_validate(operation.params)
-        return await get_image_provider().edit(
+        return await provider.edit(
             EditRequest(
                 prompt=f"只替换背景，保持主体、光线和边缘不变。新背景：{parsed.prompt}",
                 image=data,
@@ -68,7 +71,7 @@ async def apply_op(data: bytes, operation: BatchOpIn) -> list[bytes]:
         parsed = ExpandCanvasIn.model_validate(operation.params)
         meta = probe(data)
         width, height = cover_size(meta.width, meta.height, parsed.ratio)
-        return await get_image_provider().edit(
+        return await provider.edit(
             EditRequest(prompt=parsed.prompt, image=data, width=width, height=height)
         )
     if operation.tool == "prepare_delivery_sizes":
@@ -90,14 +93,18 @@ async def _store(session: AsyncSession, user_id: uuid.UUID, images: list[bytes])
 
 
 async def process_asset(
-    session: AsyncSession, user_id: uuid.UUID, source: Asset, payload: BatchIn
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    source: Asset,
+    payload: BatchIn,
+    provider: ImageProvider,
 ) -> list[Asset]:
     data = await storage.get(source.storage_key)
     frames = [data]
     for operation in payload.operations:
         next_frames: list[bytes] = []
         for frame in frames:
-            next_frames.extend(await apply_op(frame, operation))
+            next_frames.extend(await apply_op(frame, operation, provider))
         frames = next_frames
     encoded: list[bytes] = []
     for frame in frames:
@@ -119,6 +126,14 @@ async def execute(session: AsyncSession, run: ToolRun) -> dict:
     total = len(items)
     await runs.report(session, run, 8, "准备批量任务", {"items": copy.deepcopy(items)})
 
+    # 整批任务沿用同一个运行版本：worker 在入队时已经把 version 钉在 run 上
+    from app.services.runtime_provider import image_client_for_run, unwrap_runtime_error
+
+    try:
+        client = await image_client_for_run(session, run)
+    except Exception as exc:
+        raise unwrap_runtime_error(exc) from exc
+
     for index, item in enumerate(items):
         item["status"] = "running"
         await runs.report(
@@ -136,7 +151,9 @@ async def execute(session: AsyncSession, run: ToolRun) -> dict:
             item["error"] = "素材不存在"
             continue
         try:
-            outputs = await process_asset(session, run.user_id, source, payload)
+            outputs = await process_asset(
+                session, run.user_id, source, payload, client.provider
+            )
         except Exception as exc:
             item["status"] = "failed"
             item["error"] = str(exc) or "处理失败"

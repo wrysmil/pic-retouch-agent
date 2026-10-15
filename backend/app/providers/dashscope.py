@@ -5,7 +5,6 @@ import io
 import httpx
 from PIL import Image
 
-from app.config import get_settings
 from app.providers.base import (
     EditRequest,
     GenerateRequest,
@@ -37,15 +36,22 @@ class DashScopeImageProvider(ImageProvider):
 
     name = "dashscope"
 
-    def __init__(self) -> None:
-        settings = get_settings()
-        if not settings.dashscope_api_key:
-            raise ProviderError("未配置 DASHSCOPE_API_KEY")
-        self._model = settings.text_to_image_model
-        self._edit_model = settings.image_edit_model
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        text_to_image_model: str,
+        image_edit_model: str,
+    ) -> None:
+        """由 model_runtime 按发布的连接版本注入 base_url / key / 模型名，不读环境变量。"""
+        if not api_key:
+            raise ProviderError("DashScope 连接未配置 API Key")
+        self._model = text_to_image_model
+        self._edit_model = image_edit_model
         self._client = httpx.AsyncClient(
-            base_url=settings.dashscope_base_url,
-            headers={"Authorization": f"Bearer {settings.dashscope_api_key}"},
+            base_url=base_url,
+            headers={"Authorization": f"Bearer {api_key}"},
             timeout=30.0,
         )
 

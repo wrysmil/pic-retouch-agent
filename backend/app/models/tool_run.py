@@ -44,3 +44,10 @@ class ToolRun(UUIDBase):
     retries: Mapped[int] = mapped_column(default=0)
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, default=None)
     finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, default=None)
+    # 绑定的运行模型配置版本：调度时由 submit/任务上下文固定；为空说明此任务早于发布机制
+    runtime_config_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("runtime_config_versions.id", ondelete="RESTRICT"),
+        default=None,
+        index=True,
+    )

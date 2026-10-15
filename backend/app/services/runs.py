@@ -36,6 +36,7 @@ def snapshot(run: ToolRun) -> dict:
         "stage": run.stage,
         "error": run.error,
         "result": run.result or {},
+        "runtime_config_version_id": str(run.runtime_config_version_id) if run.runtime_config_version_id else None,
     }
 
 
@@ -45,19 +46,21 @@ async def create(
     tool: str,
     params: dict,
     session_id: uuid.UUID | None = None,
+    *,
+    runtime_config_version_id: uuid.UUID | None = None,
 ) -> ToolRun:
     """
     创建新任务记录。
 
-    - **session**: 数据库会话
-    - **user_id**: 任务归属的用户 ID
-    - **tool**: 工具标识（如 "generate_image"）
-    - **params**: 任务参数字典
-    - **session_id**: 所属编辑会话（可选，从会话内发起时有值）
-    - **返回**: 创建的任务记录
+    - **runtime_config_version_id**: 任务调度时锁定的模型版本；留空表示老任务未启用版本机制
     """
     run = ToolRun(
-        user_id=user_id, session_id=session_id, tool=tool, params=params, stage="等待开始"
+        user_id=user_id,
+        session_id=session_id,
+        tool=tool,
+        params=params,
+        stage="等待开始",
+        runtime_config_version_id=runtime_config_version_id,
     )
     session.add(run)
     await session.commit()
@@ -66,15 +69,7 @@ async def create(
 
 
 async def get(session: AsyncSession, run_id: uuid.UUID, user_id: uuid.UUID) -> ToolRun:
-    """
-    按 ID 获取任务，并校验归属。
-
-    - **session**: 数据库会话
-    - **run_id**: 任务 ID
-    - **user_id**: 用户 ID（用于归属校验）
-    - **返回**: 任务记录
-    - **抛出**: RunNotFound 不存在或无权访问
-    """
+    """按 ID 获取任务，并校验归属。"""
     run = await session.scalar(
         select(ToolRun).where(ToolRun.id == run_id, ToolRun.user_id == user_id)
     )
@@ -84,14 +79,7 @@ async def get(session: AsyncSession, run_id: uuid.UUID, user_id: uuid.UUID) -> T
 
 
 async def load(session: AsyncSession, run_id: uuid.UUID) -> ToolRun:
-    """
-    按 ID 加载任务（不校验归属，用于 Worker）。
-
-    - **session**: 数据库会话
-    - **run_id**: 任务 ID
-    - **返回**: 任务记录
-    - **抛出**: RunNotFound 不存在
-    """
+    """按 ID 加载任务（不校验归属，用于 Worker）。"""
     run = await session.get(ToolRun, run_id)
     if run is None:
         raise RunNotFound
@@ -99,24 +87,13 @@ async def load(session: AsyncSession, run_id: uuid.UUID) -> ToolRun:
 
 
 async def _commit(session: AsyncSession, run: ToolRun) -> None:
-    """
-    内部方法：提交变更并发布事件。
-
-    - **session**: 数据库会话
-    - **run**: 任务记录
-    """
+    """提交变更并发布事件。"""
     await session.commit()
     await events.publish(run.id, snapshot(run))
 
 
 async def start(session: AsyncSession, run: ToolRun) -> None:
-    """
-    标记任务开始执行。
-
-    - **session**: 数据库会话
-    - **run**: 任务记录
-    - **效果**: 设置 status=RUNNING, progress=5, stage="已开始"
-    """
+    """标记任务开始执行。"""
     run.status = RunStatus.RUNNING
     run.started_at = datetime.now(UTC)
     run.progress = 5
@@ -131,16 +108,7 @@ async def report(
     stage: str,
     result: dict | None = None,
 ) -> None:
-    """
-    报告任务进度。
-
-    - **session**: 数据库会话
-    - **run**: 任务记录
-    - **progress**: 进度百分比（0-100）
-    - **stage**: 当前阶段描述（如 "正在生成"、"保存候选图"）
-    - **result**: 可选，边跑边写的中间结果（如批量任务逐项进度）
-    - **效果**: 更新进度和阶段描述，发布事件
-    """
+    """报告任务进度。"""
     run.progress = max(run.progress, progress)
     run.stage = stage
     if result is not None:
@@ -156,16 +124,7 @@ async def finish(
     result: dict | None = None,
     error: str | None = None,
 ) -> None:
-    """
-    标记任务结束。
-
-    - **session**: 数据库会话
-    - **run**: 任务记录
-    - **status**: 最终状态（SUCCEEDED 或 FAILED）
-    - **result**: 成功时的结果数据（如 asset_ids 列表）
-    - **error**: 失败时的错误信息
-    - **效果**: 设置状态、结果/错误、进度为 100（成功时）、发布事件
-    """
+    """标记任务结束。"""
     run.status = status
     run.result = result or {}
     run.error = error

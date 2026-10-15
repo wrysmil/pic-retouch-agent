@@ -77,9 +77,15 @@ async def respond(session: AsyncSession, record: EditSession, goal: str) -> Agen
     # 事后取就记成改完之后的号，这轮对话就对不上它发出时的画布了
     revision = record.revision
     reply, steps, error = "", [], None
+    runtime_version_id: uuid.UUID | None = None
 
     try:
-        reply, steps = await agent.run(goal, await describe(session, record))
+        # 先把当前生效版本钉下来，后续 graph/工具执行都用这一份
+        from app.services.model_runtime import current_version_id, get_planner
+
+        runtime_version_id = await current_version_id(session)
+        planner = await get_planner(session, runtime_version_id)
+        reply, steps = await agent.run(goal, await describe(session, record), planner.client)
         steps = await _pin_selection(session, record, steps)
     except agent.PlannerUnavailable as exc:
         # 模型没配或调不通，异常信息本身可以给用户看（如「未配置模型」），原样带出去
@@ -112,6 +118,7 @@ async def respond(session: AsyncSession, record: EditSession, goal: str) -> Agen
         plan=steps,
         status=status,
         error=error,
+        runtime_config_version_id=runtime_version_id,
     )
     session.add(turn)
     await session.commit()
@@ -248,7 +255,12 @@ async def _advance(session: AsyncSession, turn: AgentRun) -> AgentRun:
                 step["status"] = plan_mod.WAITING
                 continue
             run = await tools.submit(
-                session, turn.user_id, step["tool"], step["params"], turn.session_id
+                session,
+                turn.user_id,
+                step["tool"],
+                step["params"],
+                turn.session_id,
+                runtime_config_version_id=turn.runtime_config_version_id,
             )
             step["run_id"] = str(run.id)
             step["status"] = run.status.value

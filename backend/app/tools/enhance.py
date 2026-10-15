@@ -5,9 +5,10 @@ from app.edits.split import already_split
 from app.layers import BACKGROUND_LAYER_ID, LayerDocument, LayerKind
 from app.models.asset import AssetKind, AssetSource
 from app.models.tool_run import ToolRun
-from app.providers import EditRequest, get_image_provider
+from app.providers import EditRequest
 from app.ratios import Ratio, cover_size
 from app.services import assets, runs
+from app.services.runtime_provider import image_client_for_run
 from app.tools.base import ToolSpec
 from app.tools.context import document_of, flatten_session, require_session
 from app.tools.target import background_target, layer_image, write_layer_image
@@ -72,7 +73,8 @@ async def replace_background_exec(session: AsyncSession, run: ToolRun) -> dict:
     else:
         source = await layer_image(session, record, target)
     await runs.report(session, run, 30, "生成新背景")
-    images = await get_image_provider().edit(
+    client = await image_client_for_run(session, run)
+    images = await client.provider.edit(
         EditRequest(
             prompt=f"只替换背景，保持主体、光线和边缘不变。新背景：{run.params['prompt']}",
             image=source,
@@ -95,7 +97,8 @@ async def expand_canvas_exec(session: AsyncSession, run: ToolRun) -> dict:
     await runs.report(session, run, 15, "读取画布")
     source = await flatten_session(session, record)
     await runs.report(session, run, 30, "延伸画幅")
-    images = await get_image_provider().edit(
+    client = await image_client_for_run(session, run)
+    images = await client.provider.edit(
         EditRequest(prompt=run.params["prompt"], image=source, width=width, height=height),
         on_progress=lambda progress, stage: _progress(session, run, progress, stage),
     )
@@ -110,7 +113,8 @@ async def upscale_image_exec(session: AsyncSession, run: ToolRun) -> dict:
     await runs.report(session, run, 15, "读取画布")
     source = await flatten_session(session, record)
     await runs.report(session, run, 30, "提升分辨率")
-    output = await get_image_provider().upscale(
+    client = await image_client_for_run(session, run)
+    output = await client.provider.upscale(
         source,
         run.params["scale"],
         on_progress=lambda progress, stage: _progress(session, run, progress, stage),

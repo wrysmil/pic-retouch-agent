@@ -12,9 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import storage
 from app.models.asset import AssetKind, AssetSource
 from app.models.tool_run import ToolRun
-from app.providers import GenerateRequest, ProviderError, get_image_provider
+from app.providers import GenerateRequest, ProviderError
 from app.ratios import Ratio, size_of
 from app.services import assets, runs
+from app.services.model_runtime import (
+    IncompatibleRuntime,
+    RuntimeMissing,
+    get_image_client,
+)
 
 
 async def _references(session: AsyncSession, run: ToolRun) -> list[bytes]:
@@ -39,10 +44,15 @@ async def execute(session: AsyncSession, run: ToolRun) -> dict:
     """执行一次文生图并把候选图转存为素材，返回 {"asset_ids": [...]}。
 
     模型返回的链接 24 小时过期，必须落到自有存储后再对外暴露。
+    模型客户端按 run.runtime_config_version_id 选择；该版本不存在或被撤销时报错。
     """
 
     async def on_progress(progress: int, stage: str) -> None:
         await runs.report(session, run, progress, stage)
+
+    if run.runtime_config_version_id is None:
+        raise ProviderError("任务未绑定模型配置版本，请重新发起")
+    client = await get_image_client(session, run.runtime_config_version_id)
 
     width, height = size_of(Ratio(run.params["ratio"]))
     request = GenerateRequest(
@@ -55,7 +65,10 @@ async def execute(session: AsyncSession, run: ToolRun) -> dict:
         references=await _references(session, run),
     )
 
-    images = await get_image_provider().generate(request, on_progress)
+    try:
+        images = await client.provider.generate(request, on_progress)
+    except (RuntimeMissing, IncompatibleRuntime) as exc:
+        raise ProviderError(str(exc)) from exc
 
     await runs.report(session, run, 90, "保存候选图")
     created = [

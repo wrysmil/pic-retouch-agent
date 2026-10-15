@@ -29,5 +29,7 @@ class Credentials(BaseModel):
 class UserOut(BaseModel):
     id: uuid.UUID
     username: str
+    role: str = Field(description="user 或 admin")
+    is_active: bool
 
     model_config = {"from_attributes": True}

@@ -4,9 +4,8 @@ import httpx
 import pytest
 from langchain_core.messages import AIMessage
 
-from app.agent import graph
-from app.agent.llm import planner
-from app.config import get_settings
+from app.services import agent as agent_service
+from app.services import model_runtime as model_runtime_mod
 from app.tasks.tools import run_tool
 from tests.canvas import apply, error_of, layers, scene, select, settle
 from tests.test_sessions import open_session
@@ -22,15 +21,31 @@ class FakePlanner:
         self.messages = messages
         return self._message
 
+    def bind_tools(self, _tools):
+        return self
+
 
 @pytest.fixture
 def fake_planner(monkeypatch):
+    """把运行时规划客户端替换为 FakePlanner；agent 流程通过它走 ainvoke。"""
+
     def install(message: AIMessage) -> FakePlanner:
         fake = FakePlanner(message)
-        monkeypatch.setattr(graph, "planner", lambda: fake)
+
+        async def fake_get_planner(session, version_id):
+            return _FakeClient(fake)
+
+        monkeypatch.setattr(model_runtime_mod, "get_planner", fake_get_planner)
+        # agent.respond 在模块级 from import 了 get_planner；直接覆盖 agent_service 命名空间里的引用
+        monkeypatch.setattr(agent_service, "get_planner", fake_get_planner)
         return fake
 
     return install
+
+
+class _FakeClient:
+    def __init__(self, planner: FakePlanner) -> None:
+        self.client = planner
 
 
 def tool_call(name: str, args: dict) -> AIMessage:
@@ -204,18 +219,33 @@ async def test_conversation_is_returned_in_order(signed_in: httpx.AsyncClient, f
     assert [turn["goal"] for turn in turns] == ["第一句", "第二句"]
 
 
-async def test_missing_api_key_fails_the_turn(signed_in: httpx.AsyncClient, monkeypatch):
-    """模型不可用时必须明确失败，不能伪造成功结果。"""
-    settings = get_settings()
-    monkeypatch.setattr(settings, "dashscope_api_key", "")
-    planner.cache_clear()
-    session_id = (await open_session(signed_in))["id"]
+async def test_missing_runtime_fails_the_turn(signed_in: httpx.AsyncClient, monkeypatch):
+    """运行配置缺失时必须明确失败，不能伪造成功结果。
 
+    把运行时缓存清掉、把 planner 模型关联的连接版本撤销后，新消息应该以 FAILED 落库。
+    """
+    from app.db import SessionFactory
+    from app.models import ModelConnectionVersion
+    from app.services import model_config
+
+    model_runtime_mod.planner_cache().clear()
+
+    # 找到当前生效版本，把它的文本连接版本撤销
+    async with SessionFactory() as session:
+        runtime = await model_config.get_current_version(session)
+        assert runtime is not None
+        version = await session.get(ModelConnectionVersion, runtime.text_connection_version_id)
+        assert version is not None
+        version.revoked = True
+        await session.commit()
+
+    model_runtime_mod.planner_cache().clear()
+
+    session_id = (await open_session(signed_in))["id"]
     turn = await send(signed_in, session_id, "换个背景")
 
-    planner.cache_clear()
     assert turn["status"] == "failed"
-    assert "DASHSCOPE_API_KEY" in turn["error"]
+    assert turn["error"], "失败时必须填上原因"
 
 
 async def test_blank_message_is_rejected(signed_in: httpx.AsyncClient):

@@ -2,12 +2,9 @@ import uuid
 
 import httpx
 import pytest
-from langchain_core.messages import AIMessage
 
-from app.agent import graph
 from app.tasks.tools import run_tool
 from tests.canvas import apply, error_of, invoke, layers, scene, select
-from tests.test_agent import FakePlanner
 from tests.test_sessions import open_session, upload
 
 
@@ -176,14 +173,15 @@ async def test_adjust_image_adopts_a_new_asset(signed_in: httpx.AsyncClient):
     assert updated["can_undo"] is True
 
 
-async def test_agent_can_dispatch_a_canvas_tool(signed_in: httpx.AsyncClient, monkeypatch):
-    fake = FakePlanner(
+async def test_agent_can_dispatch_a_canvas_tool(
+    signed_in: httpx.AsyncClient, monkeypatch, fake_planner
+):
+    fake_planner(
         AIMessage(
             content="",
             tool_calls=[{"name": "flip_layer", "args": {"direction": "horizontal"}, "id": "c1"}],
         )
     )
-    monkeypatch.setattr(graph, "planner", lambda: fake)
     session_id = (await open_session(signed_in))["id"]
 
     turn = (

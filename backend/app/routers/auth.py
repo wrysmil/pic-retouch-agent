@@ -22,7 +22,7 @@ def _start_session(response: Response, user: User) -> UserOut:
     settings = get_settings()
     response.set_cookie(
         SESSION_COOKIE,
-        issue_token(user.id),
+        issue_token(user.id, user.auth_version),
         max_age=settings.jwt_ttl_hours * 3600,
         httponly=True,
         samesite="lax",
@@ -44,7 +44,7 @@ async def register(
     session: SessionDep,
 ) -> UserOut:
     """
-    注册新用户。
+    注册新用户。注册路径固定产出普通用户；管理员只能由后台或初始化脚本创建。
 
     - **credentials.username**: 用户名（3-32字符）
     - **credentials.password**: 密码（6-128字符）
@@ -75,13 +75,16 @@ async def login(
 
     - **credentials.username**: 用户名
     - **credentials.password**: 密码
-    - **返回**: 登录用户的详细信息
+    - **返回**: 当前用户的详细信息
 
     **可能错误**:
     - 401: 用户名或密码错误
+    - 403: 账号已被停用
     """
     try:
         user = await auth_service.authenticate(session, credentials.username, credentials.password)
+    except auth_service.AccountDisabled:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "账号已停用，请联系管理员") from None
     except auth_service.InvalidCredentials:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户名或密码错误") from None
     return _start_session(response, user)

@@ -16,6 +16,7 @@ dependencies = [
     "python-multipart",
     "bcrypt",
     "pyjwt",
+    "cryptography",
     "httpx",
 ]
 
