@@ -28,6 +28,8 @@ def upgrade() -> None:
     )
 
     # runtime_config_versions：6 个槽位（规划/生成/编辑）-> 4 个（文本/生图）
+    # 直接 DROP COLUMN：PostgreSQL 会连带删除依附其上的单列外键，
+    # 无需按名删约束（原迁移未命名，PG 自动生成的名字被截断到 63 字符，无法可靠引用）。
     for col in (
         "planner_model_id",
         "planner_connection_version_id",
@@ -36,9 +38,6 @@ def upgrade() -> None:
         "image_edit_model_id",
         "image_edit_connection_version_id",
     ):
-        op.drop_constraint(
-            f"runtime_config_versions_{col}_fkey", "runtime_config_versions", type_="foreignkey"
-        )
         op.drop_column("runtime_config_versions", col)
 
     op.add_column("runtime_config_versions", sa.Column("text_model_id", sa.UUID(), nullable=True))
@@ -151,7 +150,7 @@ def downgrade() -> None:
         ondelete="RESTRICT",
     )
     op.create_foreign_key(
-        "runtime_config_versions_text_to_image_connection_version_id_fkey",
+        "rcv_text_to_image_connection_version_id_fkey",
         "runtime_config_versions",
         "model_connection_versions",
         ["text_to_image_connection_version_id"],
