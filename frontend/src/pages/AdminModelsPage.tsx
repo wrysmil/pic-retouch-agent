@@ -39,7 +39,19 @@ import {
   selectCls,
 } from '@/components/admin/ui'
 
-const ADAPTERS: AdapterType[] = ['dashscope', 'openai_compat', 'openai_image', 'mock']
+const ADAPTERS: AdapterType[] = ['dashscope', 'openai_compat', 'openai_image', 'toookens', 'minimax', 'mock']
+// 各适配器的规范 base URL：MiniMax 只填到 /v1 为止（adapter 也会兜底纠正），
+// 填成文档里的 .../v1/chat/completions 会被拼成重复路径。
+const BASE_URL_PLACEHOLDER: Record<AdapterType, string> = {
+  dashscope: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  openai_compat: 'https://api.openai.com/v1',
+  openai_image: 'https://api.openai.com/v1',
+  toookens: 'https://api.toookens.com/v1',
+  minimax: 'https://api.minimax.cn/v1',
+  mock: 'http://localhost/mock',
+}
+// MiniMax M3.1-Flash 的思考深度；留空则用厂商默认（max，最慢但最充分）
+const REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const MODEL_TYPES: { value: ModelType; label: string }[] = [
   { value: 'text', label: '文本模型' },
   { value: 'image', label: '生图模型' },
@@ -535,8 +547,13 @@ function ConnectionDialog({
             ))}
           </select>
         </Field>
-        <Field label="Base URL" hint="生产需 HTTPS">
-          <input value={form.base_url} onChange={(e) => set('base_url', e.target.value)} className={inputCls} placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" />
+        <Field label="Base URL" hint="生产需 HTTPS；minimax 填到 /v1 即可">
+          <input
+            value={form.base_url}
+            onChange={(e) => set('base_url', e.target.value)}
+            className={inputCls}
+            placeholder={BASE_URL_PLACEHOLDER[form.adapter_type]}
+          />
         </Field>
         <Field label="API Key">
           <input type="password" value={form.api_key} onChange={(e) => set('api_key', e.target.value)} className={inputCls} placeholder="密钥将以密文保存" />
@@ -764,7 +781,12 @@ function ModelDialog({
   })
   const [modelType, setModelType] = useState<ModelType>('text')
   const [editVendorId, setEditVendorId] = useState('')
+  const [effort, setEffort] = useState('')
   const set = (k: keyof typeof form, v: string) => setForm({ ...form, [k]: v })
+
+  const selectedConn = connections.find((c) => c.id === form.connection_id)
+  const isMinimax = selectedConn?.adapter_type === 'minimax'
+  const minimaxText = isMinimax && modelType === 'text'
 
   const submit = () =>
     create.mutate(
@@ -772,6 +794,8 @@ function ModelDialog({
         ...form,
         model_type: modelType,
         edit_vendor_model_id: modelType === 'image' && editVendorId.trim() ? editVendorId.trim() : null,
+        // MiniMax 的思考深度是模型级参数，运行时由 model_runtime 读 param_schema 下发
+        param_schema: minimaxText && effort ? { reasoning_effort: effort } : {},
       },
       { onSuccess: () => onDone(form.slug), onError },
     )

@@ -7,6 +7,7 @@ import asyncio
 import uuid
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 from langchain_openai import ChatOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,11 +23,15 @@ from app.providers.base import ImageProvider
 from app.providers.dashscope import DashScopeImageProvider
 from app.providers.mock import MockImageProvider
 from app.providers.openai_image import OpenAIImageProvider
-from app.security_vault import decrypt_secret, DecryptionFailed
+from app.providers.toookens import ToookensImageProvider
+from app.security_vault import DecryptionFailed, decrypt_secret
 from app.services import model_config
 
 
 _COMPAT_PATH = "/compatible-mode/v1"
+# MiniMax 的 OpenAI 兼容 base 固定在 /v1 之下；思考内容默认内联成 <think>，需要显式要求拆分
+_MINIMAX_CHAT_SUFFIX = "/chat/completions"
+_MINIMAX_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
 @dataclass(frozen=True)
@@ -157,6 +162,7 @@ async def _build_planner(session: AsyncSession, version_id: uuid.UUID) -> Planne
         api_key=api_key,
         base_url=_resolve_planner_base(conn.adapter_type, base_url),
         temperature=0,
+        **_planner_options(conn.adapter_type, model_def.param_schema),
     )
     return PlannerClient(
         version=version,
@@ -191,6 +197,7 @@ async def _build_image(session: AsyncSession, version_id: uuid.UUID) -> ImageCli
         image_cv,
         image_def.vendor_model_id,
         image_def.edit_vendor_model_id,
+        image_def.param_schema,
     )
     return ImageClient(
         version=version,
@@ -204,12 +211,46 @@ def _resolve_planner_base(adapter: AdapterType, base_url: str) -> str:
     """不同文字协议的 base URL 差异在这里收敛。
 
     DashScope 兼容模式需在 base 后追加 /compatible-mode/v1 才能用 ChatOpenAI 协议。
+    MiniMax 的兼容接口固定在 /v1 下，容忍只填域名或直接粘完整 POST 地址两种写法。
     OpenAI 兼容模式假定 base_url 已带版本路径，由管理员在前台填正确。
     """
     base = base_url.rstrip("/")
     if adapter == AdapterType.DASHSCOPE:
         return f"{base}{_COMPAT_PATH}"
+    if adapter == AdapterType.MINIMAX:
+        return _resolve_minimax_base(base)
     return base
+
+
+def _resolve_minimax_base(base: str) -> str:
+    """把 MiniMax 的 base 收敛成 ChatOpenAI 期望的形式（它自己会拼 /chat/completions）。
+
+    ChatOpenAI 只认到版本路径为止，多带/少带一段都会 404：
+    只填 ``https://api.minimax.cn`` 要补 ``/v1``，粘文档里的
+    ``https://api.minimax.cn/v1/chat/completions`` 要去掉尾段。
+    """
+    if base.endswith(_MINIMAX_CHAT_SUFFIX):
+        base = base[: -len(_MINIMAX_CHAT_SUFFIX)].rstrip("/")
+    if not urlparse(base).path.strip("/"):
+        return f"{base}/v1"
+    return base
+
+
+def _planner_options(adapter: AdapterType, param_schema: dict | None) -> dict[str, Any]:
+    """按 adapter 补齐文字模型的协议级参数，转成 ChatOpenAI 的关键字参数。
+
+    MiniMax 的 M 系列默认把思考内容内联在 ``content`` 里（``<think>`` 标签），
+    规划正文会因此带上思考过程，所以显式要求 ``reasoning_split``。
+    思考深度由模型声明的 ``reasoning_effort`` 决定：省略时厂商默认 ``max``，
+    对交互式规划偏慢，登记模型时按需下调（见 scripts/register_minimax.py）。
+    """
+    if adapter != AdapterType.MINIMAX:
+        return {}
+    options: dict[str, Any] = {"extra_body": {"reasoning_split": True}}
+    effort = (param_schema or {}).get("reasoning_effort")
+    if effort in _MINIMAX_REASONING_EFFORTS:
+        options["reasoning_effort"] = effort
+    return options
 
 
 def _build_image_provider(
@@ -217,6 +258,7 @@ def _build_image_provider(
     image_cv: ModelConnectionVersion,
     generate_model_id: str,
     edit_model_id: str | None,
+    param_schema: dict | None = None,
 ) -> ImageProvider:
     """按 adapter 类型分派到具体 provider。编辑模型留空则复用生成模型名。"""
     edit_model = edit_model_id or generate_model_id
@@ -236,6 +278,17 @@ def _build_image_provider(
             model=generate_model_id,
             edit_model=edit_model,
         )
+    if adapter == AdapterType.TOOOKENS:
+        return ToookensImageProvider(
+            base_url=image_cv.base_url,
+            api_key=_decrypt_key(image_cv),
+            model=generate_model_id,
+            edit_model=edit_model,
+            param_schema=param_schema,
+        )
+    if adapter == AdapterType.MINIMAX:
+        # MiniMax 当前只按文本规划接入；生图槽位误绑时给出可读原因而不是笼统的“不支持”
+        raise IncompatibleRuntime("minimax 适配器只支持文本模型，生图请在生图连接里选其它适配器")
     raise IncompatibleRuntime(f"不支持的图像 adapter：{adapter}")
 
 

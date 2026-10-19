@@ -26,7 +26,9 @@ class AdminConnectionOut(BaseModel):
 class AdminConnectionCreate(BaseModel):
     slug: str = Field(min_length=3, max_length=64, pattern=r"^[a-z0-9_\-]+$")
     vendor: str = Field(min_length=2, max_length=32)
-    adapter_type: str = Field(pattern="^(dashscope|openai_compat|openai_image|mock)$")
+    adapter_type: str = Field(
+        pattern="^(dashscope|openai_compat|openai_image|toookens|minimax|mock)$"
+    )
     display_name: str = Field(min_length=2, max_length=128)
     base_url: str = Field(min_length=8, max_length=512)
     api_key: str = Field(min_length=1, max_length=512)

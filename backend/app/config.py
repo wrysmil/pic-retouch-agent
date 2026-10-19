@@ -41,6 +41,12 @@ class Settings(BaseSettings):
 
     # AI 模型（规划 / 文生图 / 图编辑）不再从环境变量读取，统一由后台「模型配置」
     # 发布运行版本后，经 services.model_runtime 按版本解析连接与密钥。
+    # 下面两组只被 scripts/register_toookens.py 与 scripts/register_minimax.py 使用，
+    # 用于一次性登记连接；运行期一律走已发布的连接版本，不读这里。
+    toookens_api_key: str = ""
+    toookens_base_url: str = "https://api.toookens.com/v1"
+    minimax_api_key: str = ""
+    minimax_base_url: str = "https://api.minimax.cn/v1"
 
     # 抠图 provider: auto（有 rembg 用 rembg，否则四角抠图）| rembg | corner（测试强制）
     matting_provider: str = "auto"
@@ -54,7 +60,9 @@ class Settings(BaseSettings):
     # 管理员通过后台保存的厂商 base URL 白名单（逗号分隔）。
     # 列表外的地址直接拒绝，避免把内部地址 / 第三方任意域名配入。
     # 设 "allow-localhost" 单独开启开发期本地放行。
-    allowed_provider_hosts: str = "api.openai.com,dashscope.aliyuncs.com"
+    allowed_provider_hosts: str = (
+        "api.openai.com,dashscope.aliyuncs.com,api.toookens.com,api.minimax.cn"
+    )
 
     @property
     def is_production(self) -> bool:

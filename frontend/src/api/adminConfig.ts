@@ -2,7 +2,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '@/api/client'
 
-export type AdapterType = 'dashscope' | 'openai_compat' | 'openai_image' | 'mock'
+export type AdapterType =
+  | 'dashscope'
+  | 'openai_compat'
+  | 'minimax'
+  | 'openai_image'
+  | 'toookens'
+  | 'mock'
 export type ModelType = 'text' | 'image'
 
 export type Connection = {

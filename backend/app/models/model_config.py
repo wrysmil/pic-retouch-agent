@@ -26,6 +26,8 @@ class AdapterType(enum.StrEnum):
     DASHSCOPE = "dashscope"
     OPENAI_COMPAT = "openai_compat"  # 文本走 /compatible-mode/v1，OpenAI Chat Completions 协议
     OPENAI_IMAGE = "openai_image"  # 图像生成与编辑走 OpenAI Images API（gpt-image-* 等）
+    TOOOKENS = "toookens"  # Toookens /v1/images：operation_mode 区分文生图/图生图，支持异步任务
+    MINIMAX = "minimax"  # MiniMax /v1/chat/completions：文本规划，思考需拆分到 reasoning_content
     MOCK = "mock"
 
 
