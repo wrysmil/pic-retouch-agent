@@ -4,12 +4,11 @@ import uuid
 import httpx
 import pytest
 from cryptography.fernet import Fernet
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
 from app.config import get_settings
 from app.db import SessionFactory
 from app.models import (
-    AdminAuditLog,
     AdapterType,
     ModelConnection,
     ModelConnectionVersion,
@@ -24,6 +23,7 @@ from app.models import (
 from app.security import hash_password
 from app.security_vault import encrypt_secret
 from app.services import model_config
+from conftest import purge_actor_model_config
 
 
 @pytest.fixture
@@ -46,9 +46,10 @@ async def admin_actor() -> dict:
         await session.refresh(admin)
         admin_id = admin.id
     yield {"id": admin_id, "username": username, "password": password}
+    # 本用例登记的连接/模型/版本都挂在 admin_id 名下，必须先按依赖顺序清掉再删账号，
+    # 否则 users 上的 RESTRICT 外键会在 teardown 期报错，残留行还会让下次运行撞 slug
     async with SessionFactory() as session:
-        await session.execute(delete(AdminAuditLog).where(AdminAuditLog.actor_id == admin_id))
-        await session.execute(delete(User).where(User.id == admin_id))
+        await purge_actor_model_config(session, admin_id)
         await session.commit()
 
 
@@ -93,19 +94,22 @@ async def _make_models(session, conn, prefix: str) -> tuple[ModelDefinition, Mod
     return text_def, image_def
 
 
-async def test_publish_creates_version_and_advances_revision(admin_actor: AdminUser):
+async def test_publish_creates_version_and_advances_revision(admin_actor: dict):
     async with SessionFactory() as session:
         conn, conn_version = await _make_conn("t_conn_pub_1", admin_actor["id"])
         text_def, image_def = await _make_models(session, conn, "t_pub")
 
         before_state = await model_config.get_state(session)
+        # revision 必须取成普通 int：publish_version 会就地改同一个 ORM 实例，
+        # 直接读 before_state.revision 会读到自增后的值
+        before_revision = before_state.revision
         version = await model_config.publish_version(
             session,
             admin_actor["id"],
             text_model_id=text_def.id,
             image_model_id=image_def.id,
             note="first",
-            expected_revision=before_state.revision,
+            expected_revision=before_revision,
         )
         await session.commit()
         assert version.version_seq >= 1
@@ -113,15 +117,17 @@ async def test_publish_creates_version_and_advances_revision(admin_actor: AdminU
         # current 指针已更新
         after_state = await model_config.get_state(session)
         assert after_state.current_version_id == version.id
-        assert after_state.revision == before_state.revision + 1
+        assert after_state.revision == before_revision + 1
 
 
-async def test_publish_revision_conflict_rejected(admin_actor: AdminUser):
+async def test_publish_revision_conflict_rejected(admin_actor: dict):
     async with SessionFactory() as session:
         conn, _ = await _make_conn("t_conn_conflict", admin_actor["id"])
         text_def, image_def = await _make_models(session, conn, "t_conf")
 
         before_state = await model_config.get_state(session)
+        # 同上：必须先把 revision 取成 int，否则 orm 实例被 publish 就地改掉后读不到旧值
+        before_revision = before_state.revision
 
         # 先发一次
         await model_config.publish_version(
@@ -129,7 +135,7 @@ async def test_publish_revision_conflict_rejected(admin_actor: AdminUser):
             admin_actor["id"],
             text_model_id=text_def.id,
             image_model_id=image_def.id,
-            expected_revision=before_state.revision,
+            expected_revision=before_revision,
         )
         await session.commit()
 
@@ -140,11 +146,11 @@ async def test_publish_revision_conflict_rejected(admin_actor: AdminUser):
                 admin_actor["id"],
                 text_model_id=text_def.id,
                 image_model_id=image_def.id,
-                expected_revision=before_state.revision,
+                expected_revision=before_revision,
             )
 
 
-async def test_rollback_creates_new_version_with_history(admin_actor: AdminUser):
+async def test_rollback_creates_new_version_with_history(admin_actor: dict):
     async with SessionFactory() as session:
         conn, _ = await _make_conn("t_conn_rb", admin_actor["id"])
         text_def, image_def = await _make_models(session, conn, "t_rb")
@@ -185,7 +191,7 @@ async def test_rollback_creates_new_version_with_history(admin_actor: AdminUser)
         assert rolled.note.startswith("回滚")
 
 
-async def test_slug_uniqueness(admin_actor: AdminUser):
+async def test_slug_uniqueness(admin_actor: dict):
     async with SessionFactory() as session:
         with pytest.raises(model_config.SlugTaken):
             await model_config.create_connection(
@@ -211,7 +217,7 @@ async def test_slug_uniqueness(admin_actor: AdminUser):
             )
 
 
-async def test_connection_version_immutable(admin_actor: AdminUser):
+async def test_connection_version_immutable(admin_actor: dict):
     async with SessionFactory() as session:
         conn, first = await _make_conn("t_conn_immut", admin_actor["id"])
         await session.commit()
@@ -227,7 +233,7 @@ async def test_connection_version_immutable(admin_actor: AdminUser):
         assert old.base_url == first.base_url
 
 
-async def test_revoke_marks_revoked(admin_actor: AdminUser):
+async def test_revoke_marks_revoked(admin_actor: dict):
     async with SessionFactory() as session:
         conn, version = await _make_conn("t_conn_revoke", admin_actor["id"])
         await model_config.revoke_connection_version(session, admin_actor["id"], version.id)

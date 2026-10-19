@@ -1,46 +1,10 @@
-import time
 import uuid
 
 import httpx
-import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
 from app.db import SessionFactory
-from app.models import AdminAuditLog, User, UserRole
-from app.security import hash_password
-
-
-@pytest.fixture
-async def admin_credentials() -> dict:
-    """测试用管理员账号：fixture 负责创建并清理。"""
-    username = f"test_admin_{int(time.time() * 1000) % 10**8}_{uuid.uuid4().hex[:6]}"
-    password = "AdminPass123!"
-    async with SessionFactory() as session:
-        admin = User(
-            username=username,
-            password_hash=hash_password(password),
-            role=UserRole.ADMIN,
-            is_active=True,
-        )
-        session.add(admin)
-        await session.commit()
-        await session.refresh(admin)
-        admin_id = admin.id
-    yield {"username": username, "password": password, "id": admin_id}
-    async with SessionFactory() as session:
-        await session.execute(delete(AdminAuditLog).where(AdminAuditLog.actor_id == admin_id))
-        await session.execute(delete(User).where(User.id == admin_id))
-        await session.commit()
-
-
-@pytest.fixture
-async def admin_client(client: httpx.AsyncClient, admin_credentials: dict) -> httpx.AsyncClient:
-    response = await client.post(
-        "/api/auth/login",
-        json={"username": admin_credentials["username"], "password": admin_credentials["password"]},
-    )
-    assert response.status_code == 200
-    return client
+from app.models import AdminAuditLog
 
 
 async def test_unauthenticated_cannot_access_admin(client: httpx.AsyncClient):
@@ -110,6 +74,22 @@ async def test_admin_role_change_writes_audit(admin_client: httpx.AsyncClient):
 
 
 async def test_disable_self_admin_rejected(admin_client: httpx.AsyncClient, admin_credentials: dict):
+    """停用「最后一个启用管理员」必须被拒，自己也在保护范围内。
+
+    服务端规则是"必须保留至少一个启用管理员"，不是"不能停用自己"：
+    只要还有别的启用管理员，停用自己是被允许的。所以这里先把其它启用管理员停掉，
+    让当前账号成为唯一一个，再验证 409。
+    """
+    listing = await admin_client.get("/api/admin/users", params={"role": "admin"})
+    assert listing.status_code == 200
+    for item in listing.json()["items"]:
+        if not item["is_active"] or item["id"] == str(admin_credentials["id"]):
+            continue
+        stopped = await admin_client.patch(
+            f"/api/admin/users/{item['id']}/active", json={"is_active": False}
+        )
+        assert stopped.status_code == 200, stopped.text
+
     resp = await admin_client.patch(
         f"/api/admin/users/{admin_credentials['id']}/active", json={"is_active": False}
     )
