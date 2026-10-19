@@ -24,7 +24,7 @@ AI 模型（规划 / 文生图 / 图编辑）不再从环境变量读取：启�
 | `OCR_PROVIDER` | `auto` 有 rapidocr 则拆文字层，`none` 跳过 |
 | `S3_PUBLIC_ENDPOINT` | 浏览器访问签名 URL 的地址；空则与 `S3_ENDPOINT` 相同 |
 
-端口：前端 7301、API 7302、PostgreSQL 7311、Redis 7312、MinIO API 7313、MinIO Console 7314。
+端口：工作台 7301、管理后台 7303（**独立应用**，独立入口页与登录页）、API 7302、PostgreSQL 7311、Redis 7312、MinIO API 7313、MinIO Console 7314。
 
 本地 CV 模型约 340 MB，缓存在 `~/.u2net`。容器部署时由 `cv_models` volume 挂载，app 与 worker 共用。
 
@@ -39,9 +39,12 @@ uv run uvicorn app.main:app --reload --port 7302
 cd backend && uv run arq app.worker.WorkerSettings
 
 cd frontend && npm install && npm run dev
+cd frontend && npm run dev:admin
 ```
 
-浏览器打开 http://127.0.0.1:7301
+浏览器打开 http://127.0.0.1:7301 ，管理后台单独打开 http://127.0.0.1:7303 。
+
+后台是独立的前端应用（`frontend/admin/` + `frontend/vite.admin.config.ts`），有自己的入口页、路由和登录页，只接受管理员账号；与工作台共用同一份 API、设计 token 和 node_modules。构建产物分别在 `frontend/dist` 与 `frontend/dist-admin`。生产部署用 `VITE_WORKBENCH_URL` 指定工作台地址，后台首页的「返回工作台」会用它。
 
 停止中间件：`docker compose down`
 

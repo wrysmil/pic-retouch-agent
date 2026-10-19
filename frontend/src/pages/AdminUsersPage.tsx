@@ -12,9 +12,26 @@ import {
 } from '@/api/adminUsers'
 import { ApiError } from '@/api/client'
 import { errorMessage } from '@/hooks/useAuth'
-import { Badge, Button, Card, EmptyState, Field, Loading, Modal, TableShell, inputCls } from '@/components/admin/ui'
+import {
+  Alert,
+  Button,
+  DataTable,
+  EmptyState,
+  Field,
+  Loading,
+  Modal,
+  Panel,
+  Tag,
+  Toolbar,
+  cellCls,
+  inputCls,
+  rowCls,
+  selectCls,
+} from '@/components/admin/ui'
 
 type FilterState = { keyword: string; role: '' | Role; is_active: '' | 'true' | 'false' }
+
+const EMPTY_FILTER: FilterState = { keyword: '', role: '', is_active: '' }
 
 function msg(error: unknown) {
   return error instanceof ApiError ? error.message : errorMessage(error)
@@ -26,10 +43,12 @@ type RowAction =
   | { kind: 'toggle'; user: AdminUser }
 
 export default function AdminUsersPage() {
-  const [filter, setFilter] = useState<FilterState>({ keyword: '', role: '', is_active: '' })
+  // 草稿筛选条件与已生效条件分离，避免每敲一个字就打一次接口
+  const [draft, setDraft] = useState<FilterState>(EMPTY_FILTER)
+  const [filter, setFilter] = useState<FilterState>(EMPTY_FILTER)
   const [creating, setCreating] = useState(false)
   const [action, setAction] = useState<RowAction | null>(null)
-  const [banner, setBanner] = useState('')
+  const [banner, setBanner] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null)
 
   const list = useAdminUsers({
     keyword: filter.keyword || undefined,
@@ -42,137 +61,195 @@ export default function AdminUsersPage() {
   const active = useUpdateUserActive()
   const revoke = useRevokeUserSessions()
 
+  const dirty = draft.keyword !== filter.keyword || draft.role !== filter.role || draft.is_active !== filter.is_active
+
   const onToggle = () => {
     if (!action || action.kind !== 'toggle') return
     const u = action.user
     active.mutate(
       { id: u.id, is_active: !u.is_active },
-      { onSuccess: () => { setAction(null); setBanner(`已${u.is_active ? '停用' : '启用'}用户 ${u.username}`) }, onError: (e) => setBanner(msg(e)) },
+      {
+        onSuccess: () => {
+          setAction(null)
+          setBanner({ tone: 'ok', text: `已${u.is_active ? '停用' : '启用'}用户 ${u.username}` })
+        },
+        onError: (e) => setBanner({ tone: 'err', text: msg(e) }),
+      },
     )
   }
 
   const onRevoke = () => {
     if (!action || action.kind !== 'revoke') return
-    revoke.mutate(
-      action.user.id,
-      { onSuccess: () => { setAction(null); setBanner(`已撤销 ${action.user.username} 的全部会话`) }, onError: (e) => setBanner(msg(e)) },
-    )
+    revoke.mutate(action.user.id, {
+      onSuccess: () => {
+        setAction(null)
+        setBanner({ tone: 'ok', text: `已撤销 ${action.user.username} 的全部会话` })
+      },
+      onError: (e) => setBanner({ tone: 'err', text: msg(e) }),
+    })
   }
 
+  const items = list.data?.items ?? []
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-3">
       {banner ? (
-        <div className="bg-ad-primary-soft text-ad-primary-dark flex items-center justify-between rounded-ad-sm px-4 py-2.5 text-sm">
-          <span>{banner}</span>
-          <button type="button" onClick={() => setBanner('')} className="cursor-pointer rounded p-0.5 hover:opacity-70" aria-label="关闭提示">
-            <svg viewBox="0 0 24 24" fill="none" className="size-4">
-              <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
+        <Alert tone={banner.tone === 'ok' ? 'ok' : 'err'} onClose={() => setBanner(null)}>
+          {banner.text}
+        </Alert>
       ) : null}
 
-      <Card
+      <Panel
         title="用户管理"
-        desc="查看、创建账号，调整角色与启停状态，重置密码或撤销会话"
+        desc="查看与创建账号，调整角色与启停状态，重置密码或撤销会话"
+        bodyClass="p-3"
         action={
-          <Button variant="primary" onClick={() => setCreating(true)}>
-            <svg viewBox="0 0 24 24" fill="none" className="size-4">
-              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+            <svg viewBox="0 0 24 24" fill="none" className="size-3.5" aria-hidden>
+              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
             新建用户
           </Button>
         }
       >
-        {/* 过滤工具栏 */}
-        <div className="mb-4 flex flex-wrap gap-3">
-          <div className="relative min-w-[200px] flex-1">
-            <svg viewBox="0 0 24 24" fill="none" className="text-ad-faint pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2">
-              <path d="M11 19a8 8 0 100-16 8 8 0 000 16zm10 2l-4.35-4.35" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-            </svg>
+        {/* 筛选工具条 */}
+        <Toolbar className="mb-3">
+          <Field label="用户名" className="min-w-[180px] flex-1">
             <input
-              placeholder="搜索用户名前缀"
-              value={filter.keyword}
-              onChange={(e) => setFilter({ ...filter, keyword: e.target.value })}
-              className={`${inputCls} pl-9`}
+              placeholder="按前缀搜索用户名"
+              value={draft.keyword}
+              onChange={(e) => setDraft({ ...draft, keyword: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') setFilter(draft)
+              }}
+              className={inputCls}
             />
+          </Field>
+          <Field label="角色" className="w-36">
+            <select
+              value={draft.role}
+              onChange={(e) => setDraft({ ...draft, role: e.target.value as FilterState['role'] })}
+              className={selectCls}
+            >
+              <option value="">全部</option>
+              <option value="user">普通用户</option>
+              <option value="admin">管理员</option>
+            </select>
+          </Field>
+          <Field label="状态" className="w-36">
+            <select
+              value={draft.is_active}
+              onChange={(e) => setDraft({ ...draft, is_active: e.target.value as FilterState['is_active'] })}
+              className={selectCls}
+            >
+              <option value="">全部</option>
+              <option value="true">启用</option>
+              <option value="false">已停用</option>
+            </select>
+          </Field>
+          <div className="flex items-center gap-2">
+            <Button variant="primary" size="md" onClick={() => setFilter(draft)}>
+              查询
+            </Button>
+            <Button
+              variant="default"
+              size="md"
+              onClick={() => {
+                setDraft(EMPTY_FILTER)
+                setFilter(EMPTY_FILTER)
+              }}
+            >
+              重置
+            </Button>
           </div>
-          <select
-            value={filter.role}
-            onChange={(e) => setFilter({ ...filter, role: e.target.value as FilterState['role'] })}
-            className={`${inputCls} w-auto cursor-pointer`}
-          >
-            <option value="">全部角色</option>
-            <option value="user">普通用户</option>
-            <option value="admin">管理员</option>
-          </select>
-          <select
-            value={filter.is_active}
-            onChange={(e) => setFilter({ ...filter, is_active: e.target.value as FilterState['is_active'] })}
-            className={`${inputCls} w-auto cursor-pointer`}
-          >
-            <option value="">全部状态</option>
-            <option value="true">启用</option>
-            <option value="false">已停用</option>
-          </select>
-        </div>
+        </Toolbar>
 
         {list.isLoading ? (
           <Loading />
-        ) : (list.data?.items.length ?? 0) === 0 ? (
-          <EmptyState text="当前条件下暂无用户" />
+        ) : items.length === 0 ? (
+          <EmptyState
+            text="当前条件下暂无用户"
+            hint={dirty || filter !== EMPTY_FILTER ? '试着放宽筛选条件，或点击「重置」' : '点击右上角「新建用户」创建第一个账号'}
+          />
         ) : (
-          <TableShell head={['用户名', '角色', '状态', '最近登录', '注册时间', '操作']}>
-            {list.data?.items.map((u) => (
-              <tr key={u.id} className="border-ad-border hover:bg-ad-surface-2 border-b transition-colors last:border-0">
-                <td className="px-3 py-2.5">
-                  <div className="flex items-center gap-2.5">
-                    <span className="bg-ad-primary-soft text-ad-primary-dark grid size-8 shrink-0 place-items-center rounded-full text-xs font-semibold">
-                      {u.username.slice(0, 1).toUpperCase()}
-                    </span>
-                    <span className="text-ad-ink font-medium">{u.username}</span>
-                  </div>
+          <DataTable
+            head={['用户名', '角色', '状态', '最近登录', '注册时间', '操作']}
+            minWidth={840}
+            footer={
+              <>
+                <span>
+                  共 <span className="text-ad-ink font-ad-mono tabular-nums">{items.length}</span> 条记录
+                  {list.data?.total != null && list.data.total > items.length ? `（匹配 ${list.data.total} 条，仅显示前 ${items.length} 条）` : ''}
+                </span>
+                {dirty ? <span className="text-ad-accent">筛选条件已修改，点击「查询」生效</span> : <span />}
+              </>
+            }
+          >
+            {items.map((u) => (
+              <tr key={u.id} className={rowCls}>
+                <td className={cellCls}>
+                  <span className="text-ad-ink font-medium">{u.username}</span>
                 </td>
-                <td className="px-3 py-2.5">
+                <td className={cellCls}>
                   <select
                     value={u.role}
-                    onChange={(e) => role.mutate({ id: u.id, role: e.target.value as Role }, { onError: (err) => setBanner(msg(err)) })}
-                    className="border-ad-border-strong focus:border-ad-primary focus:ring-ad-primary/20 text-ad-ink cursor-pointer rounded-ad-xs border bg-ad-surface px-2 py-1 text-xs focus:ring-2 focus:outline-none"
+                    aria-label={`${u.username} 的角色`}
+                    onChange={(e) =>
+                      role.mutate(
+                        { id: u.id, role: e.target.value as Role },
+                        {
+                          onSuccess: () => setBanner({ tone: 'ok', text: `已将 ${u.username} 设为${e.target.value === 'admin' ? '管理员' : '普通用户'}` }),
+                          onError: (err) => setBanner({ tone: 'err', text: msg(err) }),
+                        },
+                      )
+                    }
+                    className={`${selectCls} h-7 w-28 py-0 text-xs`}
                   >
                     <option value="user">普通用户</option>
                     <option value="admin">管理员</option>
                   </select>
                 </td>
-                <td className="px-3 py-2.5">
-                  <Badge tone={u.is_active ? 'success' : 'danger'}>{u.is_active ? '启用' : '已停用'}</Badge>
+                <td className={cellCls}>
+                  <Tag tone={u.is_active ? 'success' : 'danger'}>{u.is_active ? '启用' : '已停用'}</Tag>
                 </td>
-                <td className="text-ad-muted font-ad-mono px-3 py-2.5 text-xs tabular-nums">
+                <td className={`${cellCls} text-ad-muted font-ad-mono text-xs tabular-nums`}>
                   {u.last_login_at ? new Date(u.last_login_at).toLocaleString('zh-CN') : '从未登录'}
                 </td>
-                <td className="text-ad-muted font-ad-mono px-3 py-2.5 text-xs tabular-nums">{new Date(u.created_at).toLocaleString('zh-CN')}</td>
-                <td className="px-3 py-2.5">
+                <td className={`${cellCls} text-ad-muted font-ad-mono text-xs tabular-nums`}>
+                  {new Date(u.created_at).toLocaleString('zh-CN')}
+                </td>
+                <td className={cellCls}>
                   <div className="flex justify-end gap-1">
-                    <Button variant="ghost" size="sm" onClick={() => setAction({ kind: 'reset', user: u })}>
+                    <Button variant="ghost" size="xs" onClick={() => setAction({ kind: 'reset', user: u })}>
                       重置密码
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setAction({ kind: 'toggle', user: u })}>
+                    <Button variant="ghost" size="xs" onClick={() => setAction({ kind: 'toggle', user: u })}>
                       {u.is_active ? '停用' : '启用'}
                     </Button>
-                    <Button variant="ghost" size="sm" className="text-ad-danger hover:bg-ad-danger-soft" onClick={() => setAction({ kind: 'revoke', user: u })}>
+                    <Button variant="ghost" size="xs" className="text-ad-danger hover:bg-ad-danger-soft" onClick={() => setAction({ kind: 'revoke', user: u })}>
                       撤销会话
                     </Button>
                   </div>
                 </td>
               </tr>
             ))}
-          </TableShell>
+          </DataTable>
         )}
-      </Card>
+      </Panel>
 
-      {creating ? <CreateDialog onClose={() => setCreating(false)} onDone={(n) => setBanner(`已创建用户 ${n}`)} /> : null}
+      {creating ? (
+        <CreateDialog onClose={() => setCreating(false)} onDone={(n) => setBanner({ tone: 'ok', text: `已创建用户 ${n}` })} />
+      ) : null}
 
       {action?.kind === 'reset' ? (
-        <ResetDialog user={action.user} onClose={() => setAction(null)} onDone={() => { setAction(null); setBanner(`已重置 ${action.user.username} 的密码`) }} />
+        <ResetDialog
+          user={action.user}
+          onClose={() => setAction(null)}
+          onDone={() => {
+            setAction(null)
+            setBanner({ tone: 'ok', text: `已重置 ${action.user.username} 的密码` })
+          }}
+        />
       ) : null}
 
       {action?.kind === 'toggle' ? (
@@ -181,18 +258,26 @@ export default function AdminUsersPage() {
           onClose={() => setAction(null)}
           footer={
             <>
-              <Button variant="ghost" onClick={() => setAction(null)}>取消</Button>
-              <Button variant={action.user.is_active ? 'danger' : 'primary'} loading={active.isPending} onClick={onToggle}>
+              <Button variant="default" onClick={() => setAction(null)}>
+                取消
+              </Button>
+              <Button
+                variant={action.user.is_active ? 'dangerSolid' : 'primary'}
+                loading={active.isPending}
+                onClick={onToggle}
+              >
                 确认{action.user.is_active ? '停用' : '启用'}
               </Button>
             </>
           }
         >
-          <p className="text-ad-ink text-sm">
+          <p className="text-ad-ink text-[13px]">
             确定要{action.user.is_active ? '停用' : '启用'}用户 <strong>{action.user.username}</strong> 吗？
           </p>
           {action.user.is_active ? (
-            <p className="text-ad-muted mt-2 text-xs">停用后该用户将无法登录，现有会话仍有效，可另行「撤销会话」强制下线。</p>
+            <p className="text-ad-muted mt-2 text-[11px]">
+              停用后该用户将无法登录，现有会话仍有效，可另行「撤销会话」强制下线。
+            </p>
           ) : null}
         </Modal>
       ) : null}
@@ -203,12 +288,16 @@ export default function AdminUsersPage() {
           onClose={() => setAction(null)}
           footer={
             <>
-              <Button variant="ghost" onClick={() => setAction(null)}>取消</Button>
-              <Button variant="danger" loading={revoke.isPending} onClick={onRevoke}>确认撤销</Button>
+              <Button variant="default" onClick={() => setAction(null)}>
+                取消
+              </Button>
+              <Button variant="dangerSolid" loading={revoke.isPending} onClick={onRevoke}>
+                确认撤销
+              </Button>
             </>
           }
         >
-          <p className="text-ad-ink text-sm">
+          <p className="text-ad-ink text-[13px]">
             将强制下线 <strong>{action.user.username}</strong> 的所有已登录设备，需要重新登录。
           </p>
         </Modal>
@@ -229,7 +318,13 @@ function CreateDialog({ onClose, onDone }: { onClose: () => void; onDone: (usern
     setErr('')
     create.mutate(
       { username, password, role, is_active: isActive },
-      { onSuccess: () => { onDone(username); onClose() }, onError: (e) => setErr(msg(e)) },
+      {
+        onSuccess: () => {
+          onDone(username)
+          onClose()
+        },
+        onError: (e) => setErr(msg(e)),
+      },
     )
   }
 
@@ -240,41 +335,71 @@ function CreateDialog({ onClose, onDone }: { onClose: () => void; onDone: (usern
       onClose={onClose}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>取消</Button>
-          <Button variant="primary" loading={create.isPending} disabled={!username || password.length < 6} onClick={submit}>
+          <Button variant="default" onClick={onClose}>
+            取消
+          </Button>
+          <Button
+            variant="primary"
+            loading={create.isPending}
+            disabled={!username || password.length < 6}
+            onClick={submit}
+          >
             创建用户
           </Button>
         </>
       }
     >
-      <div className="space-y-4">
+      <div className="space-y-3">
         <Field label="用户名">
-          <input value={username} onChange={(e) => setUsername(e.target.value)} className={inputCls} placeholder="登录用户名" />
+          <input
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            className={inputCls}
+            placeholder="登录用户名"
+            autoFocus
+          />
         </Field>
         <Field label="密码" hint="6-64 个字符">
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} placeholder="初始密码" />
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className={inputCls}
+            placeholder="初始密码"
+          />
         </Field>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-3">
           <Field label="角色">
-            <select value={role} onChange={(e) => setRole(e.target.value as Role)} className={inputCls}>
+            <select value={role} onChange={(e) => setRole(e.target.value as Role)} className={selectCls}>
               <option value="user">普通用户</option>
               <option value="admin">管理员</option>
             </select>
           </Field>
           <Field label="账号状态">
-            <button
-              type="button"
-              onClick={() => setIsActive((v) => !v)}
-              className={`${inputCls} flex cursor-pointer items-center justify-between`}
-            >
-              <span>{isActive ? '启用' : '停用'}</span>
-              <span className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${isActive ? 'bg-ad-primary' : 'bg-ad-border-strong'}`}>
-                <span className={`inline-block size-4 transform rounded-full bg-white transition-transform ${isActive ? 'translate-x-4' : 'translate-x-0.5'}`} />
-              </span>
-            </button>
+            <div className="flex gap-1.5">
+              {(
+                [
+                  { value: true, label: '启用' },
+                  { value: false, label: '停用' },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={String(opt.value)}
+                  type="button"
+                  onClick={() => setIsActive(opt.value)}
+                  className={`h-8 flex-1 cursor-pointer border text-[13px] transition-colors ${
+                    isActive === opt.value
+                      ? 'border-ad-primary bg-ad-primary-soft text-ad-primary-dark font-medium'
+                      : 'border-ad-border-strong text-ad-muted hover:bg-ad-surface-2'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </Field>
         </div>
-        {err ? <p className="text-ad-danger text-xs">{err}</p> : null}
+        {err ? <Alert tone="err">{err}</Alert> : null}
       </div>
     </Modal>
   )
@@ -289,7 +414,10 @@ function ResetDialog({ user, onClose, onDone }: { user: AdminUser; onClose: () =
     setErr('')
     reset.mutate(
       { id: user.id, new_password: password },
-      { onSuccess: onDone, onError: (e) => setErr(msg(e)) },
+      {
+        onSuccess: onDone,
+        onError: (e) => setErr(msg(e)),
+      },
     )
   }
 
@@ -300,15 +428,26 @@ function ResetDialog({ user, onClose, onDone }: { user: AdminUser; onClose: () =
       onClose={onClose}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>取消</Button>
-          <Button variant="primary" loading={reset.isPending} disabled={password.length < 6} onClick={submit}>确认重置</Button>
+          <Button variant="default" onClick={onClose}>
+            取消
+          </Button>
+          <Button variant="primary" loading={reset.isPending} disabled={password.length < 6} onClick={submit}>
+            确认重置
+          </Button>
         </>
       }
     >
       <Field label="新密码" hint="6-64 个字符">
-        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} placeholder="输入新密码" autoFocus />
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className={inputCls}
+          placeholder="输入新密码"
+          autoFocus
+        />
       </Field>
-      {err ? <p className="text-ad-danger mt-2 text-xs">{err}</p> : null}
+      {err ? <Alert tone="err">{err}</Alert> : null}
     </Modal>
   )
 }

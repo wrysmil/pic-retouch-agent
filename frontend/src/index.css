@@ -1,4 +1,8 @@
 @import 'tailwindcss';
+/* 显式声明扫描范围：后台是独立入口（frontend/admin/），不能只靠自动探测，
+   否则 admin 入口构建时可能扫不到 src/components/admin 里的类名 */
+@source '.';
+@source '../admin';
 
 @theme {
   --font-sans:
@@ -106,40 +110,78 @@
   }
 }
 
-/* 后台管理自成一套「企业蓝·数据密集」设计系统，用 ad- 前缀与工作台隔离，互不影响 */
+/* 后台管理自成一套「企业控制台」设计系统（Data-Dense Dashboard），用 ad- 前缀与工作台隔离。
+ * 三条铁律：一律直角（圆角 token 全为 0）、一律发丝线分层（不用投影）、信息密度优先。 */
 @theme {
-  --color-ad-canvas: #eef2f7;
+  --color-ad-canvas: #f0f2f5;
   --color-ad-surface: #ffffff;
-  --color-ad-surface-2: #f6f8fc;
-  --color-ad-surface-3: #eef2f8;
-  --color-ad-border: #e2e8f0;
-  --color-ad-border-strong: #cbd5e1;
-  --color-ad-ink: #0f172a;
-  --color-ad-muted: #475569;
-  --color-ad-faint: #94a3b8;
-  --color-ad-primary: #1d4ed8;
-  --color-ad-primary-dark: #1e40af;
-  --color-ad-primary-soft: #dbeafe;
-  --color-ad-accent: #d97706;
-  --color-ad-accent-soft: #fef3c7;
-  --color-ad-success: #16a34a;
-  --color-ad-success-soft: #dcfce7;
-  --color-ad-danger: #dc2626;
-  --color-ad-danger-soft: #fee2e2;
-  --color-ad-sidebar: #0d1b3e;
-  --color-ad-sidebar-2: #16264f;
-  --color-ad-sidebar-ink: #cbd5e1;
-  --color-ad-sidebar-faint: #7c8db5;
+  --color-ad-surface-2: #f7f8fa;
+  --color-ad-surface-3: #eceff3;
+  --color-ad-border: #dde1e7;
+  --color-ad-border-strong: #c2c8d1;
+  --color-ad-ink: #1b1f26;
+  --color-ad-muted: #565e6a;
+  --color-ad-faint: #8b929d;
+  --color-ad-primary: #1e40af;
+  --color-ad-primary-dark: #17307f;
+  --color-ad-primary-soft: #e7edfa;
+  --color-ad-accent: #b45309;
+  --color-ad-accent-soft: #fdf0d5;
+  --color-ad-success: #15803d;
+  --color-ad-success-soft: #dff5e6;
+  --color-ad-danger: #b91c1c;
+  --color-ad-danger-soft: #fde8e8;
+  --color-ad-sidebar: #16203a;
+  --color-ad-sidebar-2: #1f2c4d;
+  --color-ad-sidebar-ink: #c3ccdd;
+  --color-ad-sidebar-faint: #6c7c9e;
+  --color-ad-sidebar-line: #0d1526;
 
+  --font-ad-sans:
+    'Fira Sans', system-ui, -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    sans-serif;
   --font-ad-mono:
-    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+    'Fira Code', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
 
-  --radius-ad: 12px;
-  --radius-ad-sm: 8px;
-  --radius-ad-xs: 6px;
+  /* 后台一律直角：这三个 token 是兜底，任何漏写的 rounded-ad* 都会渲染成 0 */
+  --radius-ad: 0px;
+  --radius-ad-sm: 0px;
+  --radius-ad-xs: 0px;
 
-  --shadow-ad-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 4px 14px -6px rgb(15 23 42 / 0.12);
-  --shadow-ad-pop: 0 12px 32px -8px rgb(15 23 42 / 0.28);
+  /* 后台靠发丝线分层，卡片一律无投影；只有浮层保留阴影用于表达层级 */
+  --shadow-ad-card: none;
+  --shadow-ad-pop: 0 10px 28px -8px rgb(22 32 58 / 0.28);
+}
+
+/* 后台根容器：统一字体/字号，并给滚动条换上后台自己的色板 */
+@utility ad-root {
+  font-family: var(--font-ad-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--color-ad-ink);
+  --dsh-scroll-thumb: var(--color-ad-border-strong);
+
+  & input,
+  & select,
+  & textarea,
+  & button {
+    font-family: inherit;
+    font-size: inherit;
+  }
+}
+
+/* 下拉框：原生箭头在不同系统差异太大，统一成直角方框 + 自绘折线箭头 */
+@utility ad-select {
+  appearance: none;
+  padding-right: 26px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23565e6a' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 11px 11px;
+
+  &:disabled {
+    background-image: none;
+  }
 }
 
 @layer base {
@@ -202,10 +244,10 @@
   }
 }
 
-/* 面板与侧栏的滚动条不占视觉重量 */
+/* 面板与侧栏的滚动条不占视觉重量；色板可被所在区域（如 ad-root）覆盖 */
 @utility scrollbar-slim {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-line-strong) transparent;
+  scrollbar-color: var(--dsh-scroll-thumb, var(--color-line-strong)) transparent;
 
   &::-webkit-scrollbar {
     width: 8px;
@@ -213,7 +255,7 @@
   }
 
   &::-webkit-scrollbar-thumb {
-    background-color: var(--color-line-strong);
+    background-color: var(--dsh-scroll-thumb, var(--color-line-strong));
     border: 2px solid transparent;
     border-radius: 999px;
     background-clip: content-box;

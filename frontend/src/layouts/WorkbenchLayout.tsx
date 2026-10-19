@@ -59,26 +59,6 @@ export default function WorkbenchLayout() {
                 </NavLink>
               </li>
             ))}
-            {user?.role === 'admin' ? (
-              <li>
-                <NavLink
-                  to="/admin"
-                  title="后台"
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 rounded-[12px] px-3 py-2.5 text-sm transition-colors ${
-                      isActive
-                        ? 'bg-brand-soft text-brand-strong font-medium'
-                        : 'text-muted hover:bg-soft hover:text-ink'
-                    }`
-                  }
-                >
-                  <NavIcon path="M12 2l9 4-9 4-9-4 9-4zm0 8l9 4-9 4-9-4 9-4z" />
-                  <span className="truncate opacity-0 transition-opacity group-hover:opacity-100">
-                    后台
-                  </span>
-                </NavLink>
-              </li>
-            ) : null}
           </ul>
 
           <div className="border-line mt-2 border-t px-2 pt-3">

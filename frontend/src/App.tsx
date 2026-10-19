@@ -1,12 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
 import RequireAuth from '@/layouts/RequireAuth'
-import RequireAdmin from '@/layouts/RequireAdmin'
-import AdminLayout from '@/layouts/AdminLayout'
 import WorkbenchLayout from '@/layouts/WorkbenchLayout'
-import AdminModelsPage from '@/pages/AdminModelsPage'
-import AdminOverviewPage from '@/pages/AdminOverviewPage'
-import AdminUsersPage from '@/pages/AdminUsersPage'
 import AuthPage from '@/pages/AuthPage'
 import BatchPage from '@/pages/BatchPage'
 import CandidatesPage from '@/pages/CandidatesPage'
@@ -35,13 +30,7 @@ export default function App() {
           </Route>
         </Route>
 
-        <Route element={<RequireAdmin />}>
-          <Route element={<AdminLayout />}>
-            <Route path="/admin" element={<AdminOverviewPage />} />
-            <Route path="/admin/users" element={<AdminUsersPage />} />
-            <Route path="/admin/models" element={<AdminModelsPage />} />
-          </Route>
-        </Route>
+        {/* 后台已拆成独立应用（frontend/admin/ + vite.admin.config.ts，端口 7303），此处不再挂载 */}
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -19,6 +19,7 @@ __pycache__/
 # Node
 node_modules/
 dist/
+dist-admin/
 *.tsbuildinfo
 
 # 运行时数据

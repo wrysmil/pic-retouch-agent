@@ -1,4 +1,3 @@
-import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '@/api/client'
@@ -93,17 +92,4 @@ export function useRevokeUserSessions() {
     mutationFn: (id: string) => api.post<AdminUser>(`/admin/users/${id}/revoke-sessions`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: KEY }),
   })
-}
-
-export function useSignOutAndGoHome() {
-  const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const mutation = useMutation({
-    mutationFn: () => api.post<void>('/auth/logout'),
-    onSuccess: () => {
-      queryClient.clear()
-      navigate('/', { replace: true })
-    },
-  })
-  return mutation
 }
