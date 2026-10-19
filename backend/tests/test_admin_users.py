@@ -1,10 +1,13 @@
 import uuid
 
 import httpx
+import pytest
 from sqlalchemy import select
 
 from app.db import SessionFactory
-from app.models import AdminAuditLog
+from app.models import AdminAuditLog, User, UserRole
+from app.services import admin_users
+from app.services.admin_users import LastAdminViolation
 
 
 async def test_unauthenticated_cannot_access_admin(client: httpx.AsyncClient):
@@ -73,27 +76,34 @@ async def test_admin_role_change_writes_audit(admin_client: httpx.AsyncClient):
         assert rows[0].changes == {"from": "user", "to": "admin"}
 
 
-async def test_disable_self_admin_rejected(admin_client: httpx.AsyncClient, admin_credentials: dict):
+async def test_disabling_the_last_active_admin_is_refused(admin_credentials: dict):
     """停用「最后一个启用管理员」必须被拒，自己也在保护范围内。
 
-    服务端规则是"必须保留至少一个启用管理员"，不是"不能停用自己"：
-    只要还有别的启用管理员，停用自己是被允许的。所以这里先把其它启用管理员停掉，
-    让当前账号成为唯一一个，再验证 409。
-    """
-    listing = await admin_client.get("/api/admin/users", params={"role": "admin"})
-    assert listing.status_code == 200
-    for item in listing.json()["items"]:
-        if not item["is_active"] or item["id"] == str(admin_credentials["id"]):
-            continue
-        stopped = await admin_client.patch(
-            f"/api/admin/users/{item['id']}/active", json={"is_active": False}
-        )
-        assert stopped.status_code == 200, stopped.text
+    服务端规则是"必须保留至少一个启用管理员"，不是"不能停用自己"：只要还有别的
+    启用管理员，停用自己是被允许的（那条路径由 test_disable_one_of_two_admins_succeeds
+    经接口覆盖）。
 
-    resp = await admin_client.patch(
-        f"/api/admin/users/{admin_credentials['id']}/active", json={"is_active": False}
-    )
-    assert resp.status_code == 409
+    这里**在事务内造场景再回滚**，而不是经接口去停用库里其它管理员：接口会真写库，
+    一个跑在共用开发库上的用例不该顺手把真实管理员停掉（此前正是这么踩的）。
+    """
+    async with SessionFactory() as session:
+        actor = await session.get(User, admin_credentials["id"])
+        others = await session.scalars(
+            select(User).where(
+                User.role == UserRole.ADMIN,
+                User.is_active.is_(True),
+                User.id != actor.id,
+            )
+        )
+        for other in others:
+            other.is_active = False
+        await session.flush()
+
+        with pytest.raises(LastAdminViolation):
+            await admin_users.set_active(session, actor, actor.id, False)
+
+        # 回滚：库里的其它管理员状态原样保留
+        await session.rollback()
 
 
 async def test_disable_one_of_two_admins_succeeds(admin_client: httpx.AsyncClient):
