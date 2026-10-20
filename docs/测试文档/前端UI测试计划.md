@@ -104,14 +104,14 @@ cd backend && uv run python scripts/check_providers.py    # 基础设施 + 规�
 
 ```bash
 # 管理员
-cd backend && uv run python scripts/init_admin.py create admin Admin@123456
+cd backend && uv run python scripts/init_admin.py create admin <本地测试密码>
 # 普通用户：走工作台 /auth?mode=register 公开注册
 ```
 
 | 角色 | 账号 | 密码 | 用途 |
 | --- | --- | --- | --- |
-| 管理员 | `admin` | `Admin@123456` | 后台全部功能 |
-| 普通用户 | `uitest` | `uitest123` | 工作台全部功能；后台应 403 |
+| 管理员 | `admin` | 本地设置，不写入仓库 | 后台全部功能 |
+| 普通用户 | `uitest` | 本地设置，不写入仓库 | 工作台全部功能；后台应 403 |
 
 > **不落盘的凭据**：会话只存在于 `httpOnly` Cookie `session`，前端 JS 读不到。
 > 每次开新浏览器上下文都要重新登录。改密码 / 撤销会话 / 停用账号都会让旧 token 立即作废。
@@ -179,7 +179,7 @@ cd backend && uv run python scripts/init_admin.py create admin Admin@123456
 | G1-10 | 登录 | **登录态不限长度**（填 1 位用户名） | 不被前端拦截，提交后由后端返回错误 |
 | G1-11 | 已登录 | 工作台右上角「退出登录」 | `POST /api/auth/logout`，回落地页 |
 | G1-12 | 会话过期 | 改 `JWT_TTL_HOURS=1` 后用旧 token 调 `/api/sessions` | 401「未登录或会话已过期」 |
-| G1-13 | 会话过期 | 上述 401 发生在页面上 | 【缺陷】**不会自动跳登录**，只在原地显示错误横幅 |
+| G1-13 | 会话过期 | 上述 401 发生在页面上 | 【缺陷】整页刷新会被路由守卫跳到 /auth；**页内**的 401 既不跳登录也**没有任何提示**（静默失败，接口返回 401 但界面不报错） |
 | G1-14 | 账号被停用 | 管理员停用 `uitest` 后该用户登录 | 403「账号已停用，请联系管理员」 |
 
 ### G2 落地页与创作页
@@ -191,7 +191,7 @@ cd backend && uv run python scripts/init_admin.py create admin Admin@123456
 | G2-03 | — | 中文输入法组合态回车 | **不提交** |
 | G2-04 | — | 点「上传商品图」 | 【缺陷】**不打开文件选择器**，等同提交 |
 | G2-05 | 已登录 | 点场景胶囊 | 胶囊文案填入需求框 |
-| G2-06 | 已登录 | 落地页提交需求 | 跳 `/create`，`prompt-draft` 被清空 |
+| G2-06 | 已登录 | 落地页提交需求 | 跳 `/create`，创作页用草稿回填输入框；`prompt-draft` **在生成成功后才清空**（生成失败时保留） |
 | G2-07 | 已登录 | 创作页提示词为空 | 「生成」按钮 disabled |
 | G2-08 | — | 填提示词按 Enter | 等同点「生成」，提交 `POST /api/generations` |
 | G2-09 | — | 比例选 `9:16` | 提交体 `ratio` 为 `9:16` |
@@ -261,7 +261,7 @@ cd backend && uv run python scripts/init_admin.py create admin Admin@123456
 | G5-04 | 裁剪中 | 把裁剪框缩到极小 | 最小边被限制在 32px |
 | G5-05 | 裁剪中 | 点「确定」 | `crop_canvas{rect:{x,y,width,height}}`，四个值为归一化值 |
 | G5-06 | 裁剪中 | 按 Esc | 退出裁剪，不发请求 |
-| G5-07 | — | 右侧面板「调色」拖动亮度滑杆 | 画布实时滤镜；松手提交 `adjust_image` |
+| G5-07 | — | 右侧面板「调色」拖动亮度滑杆 | 画布实时滤镜（松手即更新预览）；松手**只更新草稿**，需再点「应用」才提交 `adjust_image`；「重置」把预览还原到原值 |
 | G5-08 | 调色中 | 拖动锐化 / 清晰度 | 【已知】**无前端实时预览**，应用后才可见（UI 文案已说明） |
 | G5-09 | 调色中 | 未触碰滑杆 | 「重置」「应用」按钮 disabled |
 | G5-10 | 调色中 | 点「重置」 | 预览恢复原值 |
@@ -333,7 +333,7 @@ cd backend && uv run python scripts/init_admin.py create admin Admin@123456
 | G8-03 | 内联编辑中 | 按 Esc | 取消编辑，不提交 |
 | G8-04 | 内联编辑中 | 点击别处失焦 | 提交 |
 | G8-05 | 内联编辑中 | 文案没改 | 不发请求 |
-| G8-06 | 文字面板 | 改字号为 200 | 提交 `set_layer_text{font_size:200}`（面板区间 8–120，后端 8–400） |
+| G8-06 | 文字面板 | 改字号 | 滑杆松手提交 `set_layer_text{font_size}`；**面板上限 120，写不到 200**（后端区间 8–400） |
 | G8-07 | 文字面板 | 改颜色 | `<input type=color>` 变更即提交 `set_layer_text{fill}` |
 | G8-08 | 文字面板 | textarea 里按 Ctrl+Enter | 提交；普通 Enter 换行 |
 
@@ -468,7 +468,7 @@ cd backend && uv run python scripts/init_admin.py create admin Admin@123456
 | 编号 | 前置 | 操作 | 预期 |
 | --- | --- | --- | --- |
 | G11-44 | 普通用户登录 | 打开后台 `/` | 403 内联页，文案含用户名与「请让已有管理员…改角色为管理员」 |
-| G11-45 | 403 页 | 点「换个账号」 | 【缺陷】只是整页刷新，**Cookie 未清**，仍是同一普通用户，换不了号 |
+| G11-45 | 403 页 | 点「换个账号」 | 【缺陷】跳到 /login 并提示「当前会话不是管理员账号，请先退出」；**Cookie 未清**（仍是同一普通用户），但登录框可直接改填管理员账号换号（后端会覆盖 Cookie） |
 | G11-46 | 普通用户 | 打开后台 `/login` | 【缺陷】**没有登出按钮**，只能回工作台登出 |
 | G11-47 | 管理员 | 点右上用户菜单 | 展开「返回工作台」「退出登录」 |
 | G11-48 | 管理员 | 点「退出登录」 | `POST /api/auth/logout` → 跳 `/login` |
@@ -554,6 +554,10 @@ cd backend && uv run python scripts/init_admin.py create admin Admin@123456
 | D22 | 后端测试夹具 `other_credentials` 生成了含短横线的用户名，3 个用例必然 401（既有失败，非本次回归） | `tests/conftest.py:254` | — |
 | D23 | 后端测试与常驻 worker 共用同一 Redis 队列与开发库，worker 在线时大批用例会假失败 | 环境 | — |
 | D24 | 后端 `publish_version` 只校验模型**类型**，不校验**启用状态**——UI 下拉只列启用中的，但直接调 API 能把已停用的模型发布上去 | `model_config.py:publish_version` | G11-38 |
+| D25 | ~~拆层在大画布上卡死~~ **已修复**：补洞工作图限制为 150 万像素，2160×3840 本地复验约 1.06 秒完成 | `app/edits/split.py` | G5-16 |
+| D26 | ~~两个前端共用同一个 Cookie~~ **已修复**：后台使用独立 `admin_session` 与 `/auth/admin/*`，浏览器复验两端可同时登录 | `app/security.py`、`app/routers/auth.py` | G11-44、G11-46 |
+| D27 | ~~后端校验错误直出英文~~ **已修复**：服务端统一把常见 Pydantic 422 信息本地化为中文 | `app/validation.py`、`app/main.py` | G2-13、G11-09 |
+| D28 | ~~图层缩放滑杆上限 3~~ **已修复**：前端上限与后端统一为 8 | `LayerPanel.tsx` | G4-26 |
 
 ## 9. 附录
 

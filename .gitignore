@@ -38,3 +38,8 @@ dist-admin/
 
 # 浏览器调试产物
 .playwright-mcp/
+
+# UI 上传上限测试时本地生成的大文件，不进入 Git 历史
+docs/测试文档/fixtures/big.png
+docs/测试文档/screenshots/**/_*.png
+docs/测试文档/screenshots/**/tmp-*.png
