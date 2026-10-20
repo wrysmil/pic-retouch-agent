@@ -23,14 +23,16 @@ from app.schemas.admin_config import (
     AdminConnectionVersionCreate,
     AdminModelCreate,
     AdminModelOut,
+    AdminModelToggleOut,
     AdminRuntimeOut,
+    AdminRuntimeApply,
     AdminRuntimePublish,
     AdminRuntimeRollback,
     AdminRuntimeVersionOut,
     AdminTestRequest,
     AdminTestResult,
 )
-from app.security_vault import DecryptionFailed, decrypt_secret
+from app.security_vault import DecryptionFailed, decrypt_secret, mask_secret
 from app.services import model_config
 from app.services.model_runtime import (
     IncompatibleRuntime,
@@ -38,21 +40,73 @@ from app.services.model_runtime import (
     get_image_client,
     get_planner,
 )
-from app.services.provider_url import ProviderUrlRejected, validate_provider_url
+from app.services.provider_url import ProviderUrlRejected, validate_connection_url
 
 router = APIRouter(prefix="/admin/model-config", tags=["admin:config"])
+
+
+def _clear_clients() -> None:
+    """清掉按版本缓存的模型客户端，让新发布的配置立刻生效。"""
+    from app.services.model_runtime import image_cache, planner_cache
+
+    planner_cache().clear()
+    image_cache().clear()
+
+
+async def _auto_republish(session: SessionDep, actor: AdminUser):
+    """启用状态变化后自动重发布运行版本，让「启用/停用」本身成为热更新开关。
+
+    只有当当前生效版本与「文本槽位/生图槽位各自当前启用的模型」不一致时才发新版本，
+    免得无关的启停操作把版本历史冲出一堆噪音。
+    槽位凑不齐（某类一个启用模型都没有）时不发版：当前版本继续按原样跑。
+    """
+    from app.models import ModelType
+
+    state = await model_config.get_state(session)
+    current = await model_config.get_current_version(session)
+    text = await model_config.get_active_model(session, ModelType.TEXT)
+    image = await model_config.get_active_model(session, ModelType.IMAGE)
+    if text is None or image is None:
+        return None
+    if (
+        current is not None
+        and current.text_model_id == text.id
+        and current.image_model_id == image.id
+    ):
+        return None
+    return await model_config.publish_version(
+        session,
+        actor.id,
+        text_model_id=text.id,
+        image_model_id=image.id,
+        note=f"启用状态变化自动重发布：{text.display_name} / {image.display_name}",
+        expected_revision=state.revision,
+    )
 
 
 # ---- connections ----
 
 async def _connection_view(session, conn, base_url: str = "", key_mask: str = "") -> AdminConnectionOut:
+    """组装一条连接的展示数据。
+
+    base_url / key_mask 默认从当前版本里取：列表页要显示这两列，
+    不取的话表格里永远是空的。密钥只给掩码，解不开（主密钥缺失或密文损坏）时留空，
+    不能因为读不出密钥就让整页连接列表报错。
+    """
     seq = None
     if conn.current_version_id:
-        from sqlalchemy import select
+        from app.models import ModelConnectionVersion
 
-        version = await session.get(__import__("app.models", fromlist=["ModelConnectionVersion"]).ModelConnectionVersion, conn.current_version_id)
+        version = await session.get(ModelConnectionVersion, conn.current_version_id)
         if version is not None:
             seq = version.version_seq
+            if not base_url:
+                base_url = version.base_url
+            if not key_mask and version.encrypted_api_key:
+                try:
+                    key_mask = mask_secret(decrypt_secret(version.encrypted_api_key))
+                except DecryptionFailed:
+                    key_mask = ""
     return AdminConnectionOut(
         id=conn.id,
         slug=conn.slug,
@@ -88,7 +142,7 @@ async def create_connection(
     session: SessionDep,
 ) -> AdminConnectionOut:
     try:
-        normalized_url = validate_provider_url(body.base_url)
+        normalized_url = validate_connection_url(body.adapter_type, body.base_url)
     except ProviderUrlRejected as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
@@ -123,9 +177,13 @@ async def add_version(
     actor: AdminUser,
     session: SessionDep,
 ) -> AdminConnectionOut:
+    # 地址策略按该连接自己的适配器走：mock 连接追加版本时同样不要求厂商地址
+    conn = await model_config.get_connection(session, connection_id)
     if payload.base_url is not None:
         try:
-            payload.base_url = validate_provider_url(payload.base_url)
+            payload.base_url = validate_connection_url(
+                conn.adapter_type.value, payload.base_url
+            )
         except ProviderUrlRejected as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     try:
@@ -204,26 +262,45 @@ async def create_model(
     return AdminModelOut.model_validate(model)
 
 
-@router.post("/models/{model_id}/activate", response_model=AdminModelOut)
-async def activate_model(model_id: uuid.UUID, actor: AdminUser, session: SessionDep) -> AdminModelOut:
-    """启用某模型；同类型的其他启用模型会被自动停用。"""
+@router.post("/models/{model_id}/activate", response_model=AdminModelToggleOut)
+async def activate_model(model_id: uuid.UUID, actor: AdminUser, session: SessionDep) -> AdminModelToggleOut:
+    """启用某模型；同类型的其他启用模型会被自动停用。
+
+    启用状态一变，「当前生效配置」就该跟着变，所以这里顺带重发布一次运行版本，
+    让新提交的任务立刻用上新模型——不必再去点一次「发布新版本」。
+    """
     try:
         model = await model_config.activate_model(session, actor.id, model_id)
     except model_config.ModelNotFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "模型不存在") from None
+    version = await _auto_republish(session, actor)
     await session.commit()
     await session.refresh(model)
-    return AdminModelOut.model_validate(model)
+    if version is not None:
+        _clear_clients()
+    out = AdminModelToggleOut.model_validate(model)
+    out.published_seq = version.version_seq if version is not None else None
+    return out
 
 
-@router.post("/models/{model_id}/disable", response_model=AdminModelOut)
-async def disable_model(model_id: uuid.UUID, actor: AdminUser, session: SessionDep) -> AdminModelOut:
+@router.post("/models/{model_id}/disable", response_model=AdminModelToggleOut)
+async def disable_model(model_id: uuid.UUID, actor: AdminUser, session: SessionDep) -> AdminModelToggleOut:
+    """停用某模型。
+
+    停用只影响「哪些模型可选」，不直接掐断正在跑的版本：
+    该类型若还有别的启用模型，会自动重发布切过去；一个都没有时保持当前版本不动。
+    """
     try:
         model = await model_config.disable_model(session, actor.id, model_id)
     except model_config.ModelNotFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "模型不存在") from None
+    version = await _auto_republish(session, actor)
     await session.commit()
-    return AdminModelOut.model_validate(model)
+    out = AdminModelToggleOut.model_validate(model)
+    out.published_seq = version.version_seq if version is not None else None
+    if version is not None:
+        _clear_clients()
+    return out
 
 
 # ---- runtime config ----
@@ -330,6 +407,75 @@ async def rollback_runtime(
 
     planner_cache().clear()
     image_cache().clear()
+
+    return AdminRuntimeOut(
+        current_version_seq=version.version_seq,
+        revision=(await model_config.get_state(session)).revision,
+        published_at=version.published_at,
+        published_by=version.published_by,
+        note=version.note,
+        text_model_id=version.text_model_id,
+        image_model_id=version.image_model_id,
+    )
+
+
+@router.post("/apply", response_model=AdminRuntimeOut)
+async def apply_runtime(
+    body: AdminRuntimeApply,
+    actor: AdminUser,
+    session: SessionDep,
+) -> AdminRuntimeOut:
+    """一键切换：启用指定槽位的模型并立即发布生效。
+
+    没指定的那个槽位沿用当前生效版本里的模型，所以「只把生图换成 mock」
+    不必先准备一个本地规划模型。启用与版本指针在同一个事务里改完，只产生一个新版本。
+    """
+    from app.models import ModelType
+
+    state = await model_config.get_state(session)
+    if state.revision != body.expected_revision:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"配置已被并发更新（当前 revision={state.revision}，期望 {body.expected_revision}），请刷新后重试",
+        )
+
+    current = await model_config.get_current_version(session)
+    text_id = body.text_model_id
+    image_id = body.image_model_id
+    if current is not None:
+        text_id = text_id or current.text_model_id
+        image_id = image_id or current.image_model_id
+    if text_id is None or image_id is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "尚未发布运行配置，无法确定要保留的槽位模型"
+        )
+
+    try:
+        text_model = await model_config.get_model(session, text_id)
+        image_model = await model_config.get_model(session, image_id)
+    except model_config.ModelNotFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "模型不存在") from None
+
+    if text_model.model_type != ModelType.TEXT:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "文本槽位必须绑定文本类型的模型")
+    if image_model.model_type != ModelType.IMAGE:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "生图槽位必须绑定生图类型的模型")
+
+    # 启用目标模型（同类型的其它模型会被自动停用）
+    await model_config.activate_model(session, actor.id, text_model.id)
+    await model_config.activate_model(session, actor.id, image_model.id)
+
+    version = await model_config.publish_version(
+        session,
+        actor.id,
+        text_model_id=text_model.id,
+        image_model_id=image_model.id,
+        note=body.note or f"一键切换到 {text_model.display_name} / {image_model.display_name}",
+        expected_revision=state.revision,
+    )
+    await session.commit()
+    await session.refresh(version)
+    _clear_clients()
 
     return AdminRuntimeOut(
         current_version_seq=version.version_seq,

@@ -91,7 +91,9 @@ async def create_connection(
         connection_id=conn.id,
         version_seq=1,
         base_url=base_url,
-        encrypted_api_key=encrypt_secret(api_key),
+        # 留空表示这条连接不保存任何凭证（mock 之类不连厂商的适配器），
+        # 此时不必加密，也就不强制要求 SECRET_ENC_KEY
+        encrypted_api_key=encrypt_secret(api_key) if api_key else "",
         extra=extra or {},
         created_by=actor_id,
     )
@@ -134,8 +136,15 @@ async def new_connection_version(
         connection_id=connection_id,
         version_seq=seq,
         base_url=base_url if base_url is not None else (latest.base_url if latest else ""),
+        # None 表示沿用上一版本；空串表示显式不要凭证
         encrypted_api_key=(
-            encrypt_secret(api_key) if api_key is not None else (latest.encrypted_api_key if latest else "")
+            encrypt_secret(api_key)
+            if api_key
+            else (
+                (latest.encrypted_api_key if latest else "")
+                if api_key is None
+                else ""
+            )
         ),
         extra=extra if extra is not None else (latest.extra if latest else {}),
         created_by=actor_id,
@@ -190,6 +199,18 @@ async def get_model(session: AsyncSession, model_id: uuid.UUID) -> ModelDefiniti
     if model is None:
         raise ModelNotFound
     return model
+
+
+async def get_active_model(
+    session: AsyncSession, model_type: ModelType
+) -> ModelDefinition | None:
+    """取某类型当前处于启用态的模型；一个都没有时返回 None。"""
+    return await session.scalar(
+        select(ModelDefinition).where(
+            ModelDefinition.model_type == model_type,
+            ModelDefinition.status == ModelStatus.ACTIVE,
+        )
+    )
 
 
 async def create_model(
@@ -262,6 +283,9 @@ async def activate_model(
     """启用某模型，并自动停用同类型的其他启用模型。"""
     model = await get_model(session, model_id)
     if model.status == ModelStatus.ACTIVE:
+        # 已经启用也要把同类其它模型收敛掉：库外改过状态时可能出现两个启用态，
+        # 这里再收敛一次，保证「每类只允许一个启用」这个不变量始终成立
+        await _disable_others_of_type(session, model.model_type, model.id)
         return model
     model.status = ModelStatus.ACTIVE
     await _disable_others_of_type(session, model.model_type, model.id)

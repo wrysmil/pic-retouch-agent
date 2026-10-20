@@ -26,6 +26,48 @@ AI 模型（规划 / 文生图 / 图编辑）不再从环境变量读取：启�
 | `TOOOKENS_API_KEY` | 仅 `scripts/register_toookens.py` 读取，用于登记 Toookens 生图连接 |
 | `MINIMAX_API_KEY` | 仅 `scripts/register_minimax.py` 读取，用于登记 MiniMax 文本连接 |
 
+### mock 模式（零调用费用）
+
+生图侧有原生 `mock` 适配器：走本地 PIL 占位图，不访问任何厂商，**在后台可以直接把生图模型设成 mock**——
+新建连接时适配器选 `mock`，Base URL 与 API Key 留空即可（地址自动占位为 `mock://local`，
+不受 `ALLOWED_PROVIDER_HOSTS` 白名单约束）。
+
+文本规划侧没有原生 mock（`ChatOpenAI` 必须连一个真实的 OpenAI 兼容端点），
+所以仓库提供了一个本地桩 `scripts/mock_llm_server.py`：把用户指令按关键词映射成工具调用，
+返回 OpenAI 协议的标准响应。它不是真实模型，只用来跑通规划链路。
+
+```bash
+# 1) 起本地规划桩
+cd backend && uv run python scripts/mock_llm_server.py --port 7300
+
+# 2) 放行本地地址（只有规划桩需要，mock 生图连接不需要）
+#    .env 里改一行：ALLOWED_PROVIDER_HOSTS=allow-localhost
+
+# 3) 登记 mock 连接与模型并发布运行版本（幂等）
+cd backend && uv run python scripts/register_mock.py
+
+# 4) 自检
+cd backend && uv run python scripts/check_mock_mode.py
+```
+
+也可以完全在后台 UI 里配：新建 `mock` 适配器连接 → 登记生图模型 → 新建 `openai_compat` 连接
+（`http://127.0.0.1:7300/v1`）→ 登记文本模型 → 发布运行版本。
+
+> mock 规划桩的「指令 → 工具」映射表见 [前端 UI 测试计划](docs/测试文档/前端UI测试计划.md) 第 9.1 节。
+> 切回真实厂商见同一文档第 9.3 节。
+
+### 后台热更新
+
+后台的**启用/停用模型本身就是热更新开关**：
+
+- 点「启用」某个模型 → 同类型旧模型自动停用 → **自动重发布一次运行版本** → 新提交的任务立即用上新模型
+- 点「停用」→ 该类型若还有别的启用模型就自动切过去；一个都没有时保持当前版本不动
+- 「模型清单」页顶部还有**一键切换生图**：`生图切到 Mock` / `生图切回真实` / `文本切到 Mock`，
+  只换对应槽位，另一个槽位沿用当前版本，一次操作只产生一个新版本
+
+「发布新版本」按钮仍在，用于手工指定两个槽位的组合。热更新的边界不变：
+**新任务**用新版本，**已在跑的任务**锁它提交时那一版，不受影响。
+
 ### 接入 Toookens 生图（qwen-image）
 
 白名单需含 `api.toookens.com`，然后在 `backend` 下登记连接与模型：
@@ -97,3 +139,6 @@ cd backend && uv run python -m app.eval app/eval/dataset
 ```
 
 仓库自带一份无线耳机评测集（抠图、调色、交付尺寸）。自己加用例时按 `backend/app/eval/cases.example.json` 的格式准备 `cases.json` 和素材即可。
+
+前端 UI 的完整测试计划见 [前端 UI 测试计划](docs/测试文档/前端UI测试计划.md)，
+逐组件的能力盘点见 [UI 测试清单-工作台前端](docs/UI测试清单-工作台前端.md)。

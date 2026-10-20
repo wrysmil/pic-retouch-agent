@@ -160,10 +160,15 @@ export function useCreateModel() {
   })
 }
 
+export type ModelToggle = ModelDef & {
+  /** 这次启停顺带自动重发布的运行版本号；没有重发布时为 null */
+  published_seq: number | null
+}
+
 export function useActivateModel() {
   const invalidate = useConfigInvalidate()
   return useMutation({
-    mutationFn: (id: string) => api.post<ModelDef>(`${CONFIG}/models/${id}/activate`),
+    mutationFn: (id: string) => api.post<ModelToggle>(`${CONFIG}/models/${id}/activate`),
     onSuccess: invalidate,
   })
 }
@@ -171,7 +176,21 @@ export function useActivateModel() {
 export function useDisableModel() {
   const invalidate = useConfigInvalidate()
   return useMutation({
-    mutationFn: (id: string) => api.post<ModelDef>(`${CONFIG}/models/${id}/disable`),
+    mutationFn: (id: string) => api.post<ModelToggle>(`${CONFIG}/models/${id}/disable`),
+    onSuccess: invalidate,
+  })
+}
+
+/** 一键切换：只给要改的槽位，没给的槽位沿用当前生效版本 */
+export function useApplyRuntime() {
+  const invalidate = useConfigInvalidate()
+  return useMutation({
+    mutationFn: (body: {
+      text_model_id?: string | null
+      image_model_id?: string | null
+      note: string
+      expected_revision: number
+    }) => api.post<Runtime>(`${CONFIG}/apply`, body),
     onSuccess: invalidate,
   })
 }

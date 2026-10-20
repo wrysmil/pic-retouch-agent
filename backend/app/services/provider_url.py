@@ -14,6 +14,22 @@ class ProviderUrlRejected(Exception):
     """厂商地址不符合策略。"""
 
 
+# mock 适配器不访问网络，base_url 只是个占位标识，不是一个真实地址，
+# 所以既不受白名单约束，也不要求 HTTPS。
+MOCK_BASE_URL = "mock://local"
+
+
+def validate_connection_url(adapter_type: str, url: str) -> str:
+    """按适配器类型校验厂商地址。
+
+    mock 走本地占位图，地址不指向任何厂商，直接放行占位值；
+    其它适配器一律走白名单策略，不因是「测试连接」而放松。
+    """
+    if adapter_type == "mock":
+        return url.strip() or MOCK_BASE_URL
+    return validate_provider_url(url)
+
+
 _PRIVATE_NETS = (
     "127.0.0.0/8",
     "10.0.0.0/8",

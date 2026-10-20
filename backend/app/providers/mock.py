@@ -33,7 +33,14 @@ class MockImageProvider(ImageProvider):
     async def edit(
         self, request: EditRequest, on_progress: ProgressCallback | None = None
     ) -> list[bytes]:
-        source = Image.open(io.BytesIO(request.image)).convert("RGBA")
+        try:
+            source = Image.open(io.BytesIO(request.image)).convert("RGBA")
+        except Exception:  # noqa: BLE001 - mock 不因输入不可解码而失败
+            # 连通性测试会传一张 1 字节的假 PNG，解不开就退化成空白画布，
+            # 这样 mock 的图编辑能力自检仍能跑通
+            source = Image.new(
+                "RGBA", (request.width or 512, request.height or 512), (0, 0, 0, 0)
+            )
         width = request.width or source.width
         height = request.height or source.height
         seed = int(hashlib.sha256(request.prompt.encode()).hexdigest()[:8], 16)

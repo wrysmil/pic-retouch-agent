@@ -7,6 +7,7 @@ import {
   type Runtime,
   useActivateModel,
   useAddConnectionVersion,
+  useApplyRuntime,
   useConnections,
   useCreateConnection,
   useCreateModel,
@@ -40,6 +41,8 @@ import {
 } from '@/components/admin/ui'
 
 const ADAPTERS: AdapterType[] = ['dashscope', 'openai_compat', 'openai_image', 'toookens', 'minimax', 'mock']
+// mock 适配器走本地占位图，不访问任何厂商，因此没有真实地址也没有真实密钥
+const MOCK_BASE_URL = 'mock://local'
 // 各适配器的规范 base URL：MiniMax 只填到 /v1 为止（adapter 也会兜底纠正），
 // 填成文档里的 .../v1/chat/completions 会被拼成重复路径。
 const BASE_URL_PLACEHOLDER: Record<AdapterType, string> = {
@@ -48,7 +51,7 @@ const BASE_URL_PLACEHOLDER: Record<AdapterType, string> = {
   openai_image: 'https://api.openai.com/v1',
   toookens: 'https://api.toookens.com/v1',
   minimax: 'https://api.minimax.cn/v1',
-  mock: 'http://localhost/mock',
+  mock: MOCK_BASE_URL,
 }
 // MiniMax M3.1-Flash 的思考深度；留空则用厂商默认（max，最慢但最充分）
 const REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
@@ -502,7 +505,19 @@ function ConnectionDialog({
     base_url: '',
     api_key: '',
   })
+  const isMock = form.adapter_type === 'mock'
   const set = (k: keyof typeof form, v: string) => setForm({ ...form, [k]: v })
+  // 切适配器时顺手换掉地址与密钥：mock 不连厂商，别的适配器则不该留着 mock 的占位值
+  const onAdapter = (v: string) =>
+    setForm({
+      ...form,
+      adapter_type: v as AdapterType,
+      ...(v === 'mock'
+        ? { base_url: MOCK_BASE_URL, api_key: '' }
+        : form.adapter_type === 'mock'
+          ? { base_url: '', api_key: '' }
+          : {}),
+    })
   const submit = () => create.mutate(form, { onSuccess: () => onDone(form.slug), onError })
 
   return (
@@ -518,7 +533,7 @@ function ConnectionDialog({
           <Button
             variant="primary"
             loading={create.isPending}
-            disabled={!form.slug || !form.base_url || !form.api_key}
+            disabled={!form.slug || (!isMock && (!form.base_url || !form.api_key))}
             onClick={submit}
           >
             创建
@@ -538,8 +553,11 @@ function ConnectionDialog({
         <Field label="显示名称">
           <input value={form.display_name} onChange={(e) => set('display_name', e.target.value)} className={inputCls} placeholder="百炼主账号" />
         </Field>
-        <Field label="适配器类型">
-          <select value={form.adapter_type} onChange={(e) => set('adapter_type', e.target.value)} className={selectCls}>
+        <Field
+          label="适配器类型"
+          hint={isMock ? 'mock：本地占位图，不访问厂商、不产生费用，仅支持生图' : undefined}
+        >
+          <select value={form.adapter_type} onChange={(e) => onAdapter(e.target.value)} className={selectCls}>
             {ADAPTERS.map((a) => (
               <option key={a} value={a}>
                 {a}
@@ -547,7 +565,14 @@ function ConnectionDialog({
             ))}
           </select>
         </Field>
-        <Field label="Base URL" hint="生产需 HTTPS；minimax 填到 /v1 即可">
+        <Field
+          label="Base URL"
+          hint={
+            isMock
+              ? 'mock 不连厂商，这里只是占位标识'
+              : '生产需 HTTPS；minimax 填到 /v1 即可'
+          }
+        >
           <input
             value={form.base_url}
             onChange={(e) => set('base_url', e.target.value)}
@@ -555,8 +580,14 @@ function ConnectionDialog({
             placeholder={BASE_URL_PLACEHOLDER[form.adapter_type]}
           />
         </Field>
-        <Field label="API Key">
-          <input type="password" value={form.api_key} onChange={(e) => set('api_key', e.target.value)} className={inputCls} placeholder="密钥将以密文保存" />
+        <Field label="API Key" hint={isMock ? 'mock 不需要真实密钥，留空即可' : undefined}>
+          <input
+            type="password"
+            value={form.api_key}
+            onChange={(e) => set('api_key', e.target.value)}
+            className={inputCls}
+            placeholder={isMock ? '留空即可' : '密钥将以密文保存'}
+          />
         </Field>
       </div>
     </Modal>
@@ -617,8 +648,11 @@ function VersionDialog({
 function ModelsTab({ notify }: { notify: Notify }) {
   const models = useModels()
   const connections = useConnections()
+  const runtime = useRuntime()
+  const versions = useRuntimeVersions()
   const activate = useActivateModel()
   const disable = useDisableModel()
+  const apply = useApplyRuntime()
   const [creating, setCreating] = useState(false)
   const [type, setType] = useState<'' | ModelType>('')
   const [q, setQ] = useState('')
@@ -628,6 +662,62 @@ function ModelsTab({ notify }: { notify: Notify }) {
     for (const c of connections.data ?? []) m.set(c.id, c.display_name)
     return (id: string) => m.get(id) ?? '—'
   }, [connections.data])
+
+  const connOf = useMemo(() => {
+    const m = new Map<string, Connection>()
+    for (const c of connections.data ?? []) m.set(c.id, c)
+    return (id: string) => m.get(id)
+  }, [connections.data])
+
+  // 「切到 Mock」的目标：生图取适配器为 mock 的模型，文本取连向本机的模型
+  const mockImage = useMemo(
+    () =>
+      (models.data ?? []).find(
+        (m) => m.model_type === 'image' && connOf(m.connection_id)?.adapter_type === 'mock',
+      ),
+    [models.data, connOf],
+  )
+  const mockText = useMemo(
+    () =>
+      (models.data ?? []).find(
+        (m) =>
+          m.model_type === 'text' &&
+          /localhost|127\.0\.0\.1/.test(connOf(m.connection_id)?.base_url ?? ''),
+      ),
+    [models.data, connOf],
+  )
+  // 「切回真实」的目标：版本历史里最近一个生图槽位不是 mock 的版本
+  const realPair = useMemo(() => {
+    for (const v of versions.data ?? []) {
+      if (v.image_model_id !== mockImage?.id) {
+        return { text_model_id: v.text_model_id, image_model_id: v.image_model_id }
+      }
+    }
+    return null
+  }, [versions.data, mockImage])
+
+  const currentText = runtime.data?.text_model_id
+  const currentImage = runtime.data?.image_model_id
+  const isMockNow = currentImage === mockImage?.id
+  const isRealNow = realPair != null && currentImage === realPair.image_model_id
+
+  const switchTo = (text: string | null, image: string | null, note: string) =>
+    apply.mutate(
+      {
+        text_model_id: text,
+        image_model_id: image,
+        note,
+        expected_revision: runtime.data?.revision ?? 0,
+      },
+      {
+        onSuccess: (res) =>
+          notify({
+            tone: 'ok',
+            text: `已切换并发布 v${res.current_version_seq}，新任务立即生效`,
+          }),
+        onError: (e) => notify({ tone: 'err', text: msg(e) }),
+      },
+    )
 
   const all = models.data ?? []
   const rows = all.filter((m) => {
@@ -648,6 +738,69 @@ function ModelsTab({ notify }: { notify: Notify }) {
         </Button>
       }
     >
+      <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-ad-border pb-3">
+        <span className="text-ad-muted text-[11px] font-medium">一键切换生图</span>
+        <Button
+          variant="default"
+          size="sm"
+          loading={apply.isPending}
+          disabled={!mockImage || isMockNow}
+          title={
+            !mockImage
+              ? '需要先登记一个适配器为 mock 的生图模型'
+              : isMockNow
+                ? '当前生图已经是 mock'
+                : '生图槽位切到 mock，文本规划保持不变'
+          }
+          onClick={() => {
+            if (mockImage) {
+              switchTo(null, mockImage.id, '一键切换：生图使用 mock 占位图')
+            }
+          }}
+        >
+          生图切到 Mock
+        </Button>
+        <Button
+          variant="default"
+          size="sm"
+          loading={apply.isPending}
+          disabled={!realPair || isRealNow}
+          title={
+            !realPair
+              ? '版本历史里还没有非 mock 的配置可切回'
+              : isRealNow
+                ? '当前已是真实厂商配置'
+                : '生图槽位切回真实厂商'
+          }
+          onClick={() => {
+            if (realPair) {
+              switchTo(null, realPair.image_model_id, '一键切换：生图切回真实厂商')
+            }
+          }}
+        >
+          生图切回真实
+        </Button>
+        {mockText ? (
+          <Button
+            variant="default"
+            size="sm"
+            loading={apply.isPending}
+            disabled={currentText === mockText.id}
+            title="文本规划也切到本地 mock 规划桩（完全离线）"
+            onClick={() => {
+              if (mockText) {
+                switchTo(mockText.id, null, '一键切换：文本规划使用本地 mock 桩')
+              }
+            }}
+          >
+            文本切到 Mock
+          </Button>
+        ) : null}
+        <span className="text-ad-faint text-[11px]">
+          启用/停用模型会自动重发布运行版本，新任务立即生效
+        </span>
+      </div>
+
       <Toolbar className="mb-3">
         <Field label="搜索" className="min-w-[200px] flex-1">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="按名称或标识过滤" className={inputCls} />
@@ -718,7 +871,13 @@ function ModelsTab({ notify }: { notify: Notify }) {
                     loading={disable.isPending}
                     onClick={() =>
                       disable.mutate(m.id, {
-                        onSuccess: () => notify({ tone: 'ok', text: `已停用模型 ${m.display_name}` }),
+                        onSuccess: (res) =>
+                          notify({
+                            tone: 'ok',
+                            text: res.published_seq
+                              ? `已停用模型 ${m.display_name}，已自动重发布 v${res.published_seq}`
+                              : `已停用模型 ${m.display_name}`,
+                          }),
                         onError: (e) => notify({ tone: 'err', text: msg(e) }),
                       })
                     }
@@ -732,7 +891,13 @@ function ModelsTab({ notify }: { notify: Notify }) {
                     loading={activate.isPending}
                     onClick={() =>
                       activate.mutate(m.id, {
-                        onSuccess: () => notify({ tone: 'ok', text: `已启用模型 ${m.display_name}` }),
+                        onSuccess: (res) =>
+                          notify({
+                            tone: 'ok',
+                            text: res.published_seq
+                              ? `已启用模型 ${m.display_name}，已自动重发布 v${res.published_seq}，新任务立即生效`
+                              : `已启用模型 ${m.display_name}`,
+                          }),
                         onError: (e) => notify({ tone: 'err', text: msg(e) }),
                       })
                     }
@@ -787,6 +952,19 @@ function ModelDialog({
   const selectedConn = connections.find((c) => c.id === form.connection_id)
   const isMinimax = selectedConn?.adapter_type === 'minimax'
   const minimaxText = isMinimax && modelType === 'text'
+  // mock 连接只有图像实现，登记成文本模型运行时会直接报「mock 适配器只支持生图」
+  const isMockConn = selectedConn?.adapter_type === 'mock'
+
+  const onConnection = (id: string) => {
+    const conn = connections.find((c) => c.id === id)
+    const mock = conn?.adapter_type === 'mock'
+    setForm({
+      ...form,
+      connection_id: id,
+      vendor_model_id: mock ? 'mock' : form.vendor_model_id,
+    })
+    if (mock) setModelType('image')
+  }
 
   const submit = () =>
     create.mutate(
@@ -845,7 +1023,7 @@ function ModelDialog({
             <input value={form.slug} onChange={(e) => set('slug', e.target.value)} className={inputCls} placeholder="wanx-t2i" autoFocus />
           </Field>
           <Field label="所属连接">
-            <select value={form.connection_id} onChange={(e) => set('connection_id', e.target.value)} className={selectCls}>
+            <select value={form.connection_id} onChange={(e) => onConnection(e.target.value)} className={selectCls}>
               {connections.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.display_name}
@@ -855,7 +1033,10 @@ function ModelDialog({
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="厂商模型 ID">
+          <Field
+            label="厂商模型 ID"
+            hint={isMockConn ? 'mock 不区分型号，填任意值即可' : undefined}
+          >
             <input value={form.vendor_model_id} onChange={(e) => set('vendor_model_id', e.target.value)} className={inputCls} placeholder="wanx2.1-t2i-turbo" />
           </Field>
           <Field label="显示名称">

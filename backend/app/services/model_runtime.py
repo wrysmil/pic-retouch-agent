@@ -155,6 +155,10 @@ async def _build_planner(session: AsyncSession, version_id: uuid.UUID) -> Planne
     if conn is None:
         raise IncompatibleRuntime("文本连接不存在")
 
+    if conn.adapter_type == AdapterType.MOCK:
+        # mock 适配器只有图像实现（本地占位图），没有对话协议可谈
+        raise IncompatibleRuntime("mock 适配器只支持生图，文本规划请选 openai_compat 等适配器")
+
     api_key = _decrypt_key(conn_version)
     base_url = conn_version.base_url
     chat = ChatOpenAI(
