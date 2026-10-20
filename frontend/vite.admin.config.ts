@@ -11,6 +11,10 @@ const fromHere = (rel: string) => fileURLToPath(new URL(rel, import.meta.url))
 export default defineConfig({
   root: fromHere('./admin'),
   publicDir: fromHere('./public'),
+  // 独立缓存目录：后台与工作台共用一份 node_modules，若也用默认的 node_modules/.vite，
+  // 两个 dev server 会互相覆盖对方的依赖预构建结果——后台那份依赖集里没有
+  // zustand / react-konva，刷新工作台就会 504 Outdated Optimize Dep，页面直接白屏
+  cacheDir: fromHere('./node_modules/.vite-admin'),
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: { '@': fromHere('./src') },
