@@ -1,15 +1,16 @@
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 
-import { errorMessage, useAuthActions, useCurrentUser } from '@/hooks/useAuth'
+import { errorMessage } from '@/hooks/useAuth'
+import { useAdminAuthActions, useCurrentAdmin } from '@/hooks/useAdminAuth'
 import { Alert, Button, Field, inputCls } from '@/components/admin/ui'
 import { WORKBENCH_URL } from './config'
 import Splash from './Splash'
 
 /** 后台专用登录页：与工作台的 /auth 完全独立，只接受管理员账号。 */
 export default function AdminLoginPage() {
-  const { user, isLoading } = useCurrentUser()
-  const { login, logout } = useAuthActions()
+  const { user, isLoading } = useCurrentAdmin()
+  const { login } = useAdminAuthActions()
   const navigate = useNavigate()
 
   const [username, setUsername] = useState('')
@@ -25,16 +26,7 @@ export default function AdminLoginPage() {
     login.mutate(
       { username, password },
       {
-        onSuccess: (u) => {
-          if (u.role === 'admin') {
-            navigate('/', { replace: true })
-            return
-          }
-          // 普通用户即使登录成功也进不来，立刻退出把会话还原干净
-          logout.mutate(undefined, {
-            onSettled: () => setError('该账号不是管理员，请使用管理员账号登录'),
-          })
-        },
+        onSuccess: () => navigate('/', { replace: true }),
         onError: (e) => setError(errorMessage(e)),
       },
     )
@@ -110,7 +102,7 @@ export default function AdminLoginPage() {
         </form>
 
         <p className="text-ad-sidebar-faint mt-4 text-center text-[11px]">
-          {user ? '当前会话不是管理员账号，请先退出' : '会话状态由服务端 Cookie 维护'}
+          {user ? '当前管理员会话有效' : '后台会话与工作台相互独立'}
         </p>
       </div>
     </div>

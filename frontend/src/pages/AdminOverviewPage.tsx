@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 
 import { useAdminUsers } from '@/api/adminUsers'
 import { useConnections, useModels, useRuntime, useRuntimeVersions } from '@/api/adminConfig'
-import { useCurrentUser } from '@/hooks/useAuth'
+import { useCurrentAdmin } from '@/hooks/useAdminAuth'
 import {
   Alert,
   Button,
@@ -19,7 +19,7 @@ import {
 
 /** 后台控制台首页：关键指标条 + 运行版本概览 + 快捷操作 + 最近发布。 */
 export default function AdminOverviewPage() {
-  const { user } = useCurrentUser()
+  const { user } = useCurrentAdmin()
   const allUsers = useAdminUsers({ limit: 1 })
   const admins = useAdminUsers({ role: 'admin', limit: 1 })
   const activeUsers = useAdminUsers({ is_active: true, limit: 1 })

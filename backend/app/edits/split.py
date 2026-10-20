@@ -1,5 +1,6 @@
 import hashlib
 import io
+import math
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
@@ -18,6 +19,9 @@ from app.layers import (
 
 class EmptyCut(Exception):
     """遮罩没有覆盖到任何像素。"""
+
+
+_MAX_INPAINT_PIXELS = 1_500_000
 
 
 def mask_hash(mask: bytes) -> str:
@@ -237,11 +241,33 @@ def _cv_inpaint(image: Image.Image, luma: Image.Image) -> Image.Image:
     import cv2
     import numpy as np
 
-    hole = np.where(np.array(luma) > 12, 255, 0).astype(np.uint8)
+    original_size = image.size
+    pixels = image.width * image.height
+    if pixels > _MAX_INPAINT_PIXELS:
+        scale = math.sqrt(_MAX_INPAINT_PIXELS / pixels)
+        working_size = (
+            max(1, int(image.width * scale)),
+            max(1, int(image.height * scale)),
+        )
+        working_image = image.resize(working_size, Image.Resampling.LANCZOS)
+        working_luma = luma.resize(working_size, Image.Resampling.NEAREST)
+    else:
+        working_image = image
+        working_luma = luma
+
+    hole = np.where(np.array(working_luma) > 12, 255, 0).astype(np.uint8)
     if not hole.any():
         return image
-    radius = max(3, min(image.size) // 80)
-    return Image.fromarray(cv2.inpaint(np.array(image), hole, radius, cv2.INPAINT_TELEA))
+    radius = max(3, min(working_image.size) // 80)
+    filled = Image.fromarray(
+        cv2.inpaint(np.array(working_image), hole, radius, cv2.INPAINT_TELEA)
+    )
+    if working_image.size == original_size:
+        return filled
+
+    # 只把补洞区域贴回原图，洞外像素保持完全不变，避免整张大图因缩放变糊。
+    restored = filled.resize(original_size, Image.Resampling.LANCZOS)
+    return Image.composite(restored, image, luma)
 
 
 def _blur_inpaint(image: Image.Image, luma: Image.Image) -> Image.Image:

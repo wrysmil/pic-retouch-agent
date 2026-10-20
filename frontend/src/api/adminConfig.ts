@@ -150,6 +150,7 @@ export type ModelCreate = {
   edit_vendor_model_id?: string | null
   display_name: string
   model_type: ModelType
+  param_schema?: Record<string, unknown>
 }
 
 export function useCreateModel() {

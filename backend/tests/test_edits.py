@@ -22,6 +22,7 @@ from app.edits.pixels import adjust, remove_background
 from app.edits.render import TRANSPARENT, flatten
 from app.edits.segment import _circles
 from app.edits.split import (
+    _cv_inpaint,
     already_promoted,
     already_split,
     cut_object,
@@ -250,6 +251,29 @@ def test_fill_background_replaces_masked_subject():
     assert center != (20, 80, 200)
     assert abs(center[0] - 220) < abs(center[0] - 20)
     assert result.getpixel((4, 4))[:3] == (220, 200, 180)
+
+
+def test_large_inpaint_uses_bounded_working_image(monkeypatch):
+    """4K 竖图补洞必须先降到受控工作尺寸，避免工具长期卡在 55%。"""
+    import cv2
+
+    calls: list[tuple[int, int]] = []
+
+    def capture(image, mask, radius, method):
+        calls.append(image.shape[:2])
+        return image
+
+    monkeypatch.setattr(cv2, "inpaint", capture)
+    image = Image.new("RGB", (2160, 3840), (220, 200, 180))
+    mask = Image.new("L", image.size, 0)
+    mask.paste(255, (800, 1200, 1360, 2640))
+
+    result = _cv_inpaint(image, mask)
+
+    assert result.size == image.size
+    assert calls
+    height, width = calls[0]
+    assert width * height <= 1_600_000
 
 
 def test_punch_clears_masked_pixels_and_keeps_the_rest():

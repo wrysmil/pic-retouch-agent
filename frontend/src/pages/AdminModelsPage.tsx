@@ -1048,6 +1048,18 @@ function ModelDialog({
             <input value={editVendorId} onChange={(e) => setEditVendorId(e.target.value)} className={inputCls} placeholder="qwen-image-edit-max" />
           </Field>
         ) : null}
+        {minimaxText ? (
+          <Field label="思考深度" hint="留空使用厂商默认值">
+            <select value={effort} onChange={(e) => setEffort(e.target.value)} className={selectCls}>
+              <option value="">厂商默认</option>
+              {REASONING_EFFORTS.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </Field>
+        ) : null}
       </div>
     </Modal>
   )

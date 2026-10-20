@@ -462,7 +462,7 @@ function LayerControls({
         value={scale}
         origin={1}
         min={0.1}
-        max={3}
+        max={8}
         step={0.05}
         format={(value) => `${Math.round(value * 100)}%`}
         disabled={disabled}

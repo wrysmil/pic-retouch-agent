@@ -1,13 +1,13 @@
 import { Navigate, Outlet } from 'react-router-dom'
 
-import { useCurrentUser } from '@/hooks/useAuth'
+import { useCurrentAdmin } from '@/hooks/useAdminAuth'
 import { Button } from '@/components/admin/ui'
 import { WORKBENCH_URL } from './config'
 import Splash from './Splash'
 
 /** 后台准入：未登录去 /login，已登录但非管理员停在 403 页，不再像从前那样甩回工作台首页。 */
 export default function RequireAdmin() {
-  const { user, isLoading } = useCurrentUser()
+  const { user, isLoading } = useCurrentAdmin()
 
   if (isLoading) return <Splash />
   if (!user) return <Navigate to="/login" replace />

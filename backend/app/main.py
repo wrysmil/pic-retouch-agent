@@ -3,6 +3,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import storage
@@ -19,6 +21,7 @@ from app.routers import (
     runs,
     sessions,
 )
+from app.validation import localize_validation_errors
 
 settings = get_settings()
 
@@ -37,6 +40,14 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(_, exc: RequestValidationError) -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content={"detail": localize_validation_errors(exc.errors())},
+    )
 
 api = APIRouter(prefix="/api")
 api.include_router(auth.router)

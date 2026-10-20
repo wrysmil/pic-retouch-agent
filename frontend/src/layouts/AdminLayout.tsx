@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 
-import { useAuthActions, useCurrentUser } from '@/hooks/useAuth'
+import { useAdminAuthActions, useCurrentAdmin } from '@/hooks/useAdminAuth'
 import { Button } from '@/components/admin/ui'
 import { WORKBENCH_URL } from '@/admin/config'
 
@@ -60,8 +60,8 @@ function NavIcon({ path, className = 'size-4' }: { path: string; className?: str
 
 /** 后台控制台外壳：顶部品牌条 + 直角深色侧栏（左侧色条选中态）+ 面包屑页头。 */
 export default function AdminLayout() {
-  const { user } = useCurrentUser()
-  const { logout } = useAuthActions()
+  const { user } = useCurrentAdmin()
+  const { logout } = useAdminAuthActions()
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)

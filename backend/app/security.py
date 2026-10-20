@@ -6,8 +6,10 @@ import jwt
 
 from app.config import get_settings
 
-# 前端会话 Cookie 的名字
+# 工作台与管理后台必须使用不同 Cookie。Cookie 不按端口隔离，
+# 两个 Vite 应用都运行在 127.0.0.1 时，同名 Cookie 会互相覆盖。
 SESSION_COOKIE = "session"
+ADMIN_SESSION_COOKIE = "admin_session"
 # JWT 签名算法，H256 是对称密钥，加解密用同一个 jwt_secret
 _ALGORITHM = "HS256"
 
