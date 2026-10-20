@@ -45,7 +45,7 @@ export default function PromptComposer({
         event.preventDefault()
         onSubmit()
       }}
-      className="border-line bg-paper shadow-panel rounded-panel focus-within:border-brand relative border p-2 text-left transition-colors"
+      className="studio-composer border-line bg-paper rounded-panel focus-within:border-brand relative border p-2.5 text-left transition-[border-color,box-shadow] duration-200"
     >
       <textarea
         ref={inputRef}

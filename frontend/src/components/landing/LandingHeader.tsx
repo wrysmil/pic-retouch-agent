@@ -4,11 +4,11 @@ import BrandMark from '@/components/BrandMark'
 
 export default function LandingHeader({ account }: { account: string | null }) {
   return (
-    <header className="border-line/70 bg-canvas/80 sticky top-0 z-10 border-b backdrop-blur">
-      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-3.5">
-        <Link to="/" aria-label="AI 修图智能体首页">
+    <header className="border-line/70 bg-canvas/80 sticky top-0 z-10 border-b backdrop-blur-xl">
+      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+        <Link to="/" aria-label="映造首页">
           <BrandMark size="sm">
-            <span className="text-ink text-sm font-semibold">AI 修图智能体</span>
+            <span className="text-ink text-sm font-semibold">映造</span>
           </BrandMark>
         </Link>
 
@@ -20,7 +20,7 @@ export default function LandingHeader({ account }: { account: string | null }) {
             {account} · 进入工作台
           </Link>
         ) : (
-          <Link to="/auth" className="text-muted hover:text-ink text-sm transition-colors">
+          <Link to="/auth" className="border-line bg-paper/70 text-ink hover:bg-soft rounded-control border px-5 py-2 text-sm font-medium transition-colors">
             登录
           </Link>
         )}

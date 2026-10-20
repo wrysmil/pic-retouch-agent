@@ -50,7 +50,7 @@ export default function LandingHero({
       <div className="bg-grid absolute inset-x-0 -top-24 h-[560px]" aria-hidden />
 
       {/* 容器给到 4xl，让 14 字标题在桌面端稳定单行；正文与输入框各自再收窄 */}
-      <div className="relative mx-auto max-w-4xl px-6 pt-16 pb-14 text-center sm:pt-24">
+      <div className="relative mx-auto max-w-4xl px-6 pt-14 pb-8 text-center sm:pt-20">
         <p
           className="border-line bg-paper/80 text-muted animate-rise inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs backdrop-blur"
           style={{ animationDelay: '40ms' }}
@@ -60,14 +60,14 @@ export default function LandingHero({
         </p>
 
         <h1
-          className="text-ink animate-rise mt-6 text-[2rem] leading-[1.2] font-semibold tracking-tight text-balance sm:text-[2.7rem] lg:text-[3.25rem]"
+          className="text-ink animate-rise mt-6 text-[2rem] leading-[1.3] font-semibold tracking-tight text-balance sm:text-[2.7rem] lg:text-[3.1rem]"
           style={{ animationDelay: '120ms' }}
         >
           一句话，交付
           <span className="relative mx-1 whitespace-nowrap">
-            {/* CJK 字身占满字框，高亮块需覆盖整个字高才像马克笔而非删除线 */}
+            {/* 高亮衬底置于字身下半部，保留标题清晰度。 */}
             <span
-              className="bg-accent/55 absolute inset-x-[-7px] top-[14%] bottom-[8%] -skew-x-6 rounded-[3px]"
+              className="bg-accent/65 absolute inset-x-[-5px] top-[56%] bottom-[3%] -skew-x-6 rounded-[4px]"
               aria-hidden
             />
             <span className="relative">可上架</span>
@@ -103,7 +103,7 @@ export default function LandingHero({
               key={scenario.label}
               type="button"
               onClick={() => pick(scenario.prompt)}
-              className="border-line bg-paper/70 text-muted hover:border-brand hover:text-brand-strong rounded-full border px-3.5 py-1.5 text-xs transition-colors"
+              className="border-line bg-paper/80 text-muted hover:border-brand hover:bg-brand-soft hover:text-brand-strong rounded-full border px-3.5 py-2 text-xs transition-colors"
             >
               {scenario.label}
             </button>
@@ -111,7 +111,7 @@ export default function LandingHero({
         </div>
 
         <ul
-          className="text-faint animate-rise mt-10 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs"
+          className="text-faint animate-rise mt-7 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs"
           style={{ animationDelay: '440ms' }}
         >
           {FACTS.map((fact) => (
@@ -121,6 +121,24 @@ export default function LandingHero({
             </li>
           ))}
         </ul>
+        <div className="studio-story border-line relative mx-auto mt-10 flex min-h-48 max-w-3xl items-center overflow-hidden rounded-panel border text-left sm:mt-12 sm:min-h-56">
+          <div className="relative z-1 max-w-[58%] py-6 pl-5 sm:pl-8">
+            <p className="text-brand-strong text-[10px] font-semibold tracking-[0.18em]">A LITTLE MAGIC, A LOT OF POSSIBILITY</p>
+            <h2 className="text-ink mt-3 text-lg font-semibold tracking-tight sm:text-xl">让灵感，轻松成像。</h2>
+            <p className="text-muted mt-2 max-w-64 text-xs leading-relaxed sm:text-sm">从一个想法，到一整套商品物料。<br className="hidden sm:block" />把繁琐留给 AI，把创意留给你。</p>
+            <span className="text-brand-strong mt-4 inline-flex items-center gap-1.5 text-[10px] font-medium">
+              <span className="bg-brand size-1 rounded-full" aria-hidden /> 你的 AI 创作搭档
+            </span>
+          </div>
+          <img
+            src="/illustrations/studio-companion.webp"
+            alt=""
+            width="640"
+            height="640"
+            fetchPriority="high"
+            className="studio-illustration pointer-events-none absolute right-0 h-52 w-[46%] object-contain mix-blend-multiply sm:-right-2 sm:h-80 sm:w-80"
+          />
+        </div>
       </div>
     </section>
   )

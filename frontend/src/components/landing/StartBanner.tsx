@@ -5,11 +5,12 @@ export default function StartBanner({ label, to }: { label: string; to: string }
     <section className="mx-auto max-w-5xl px-6 pb-20">
       <div className="bg-ink rounded-panel relative isolate overflow-hidden px-8 py-14 text-center">
         <div
-          className="absolute inset-0 bg-[radial-gradient(52%_60%_at_50%_-10%,rgb(217_255_110/0.22),transparent_70%)]"
+          className="absolute inset-0 bg-[radial-gradient(52%_60%_at_50%_-10%,rgb(216_239_158/0.18),transparent_70%)]"
           aria-hidden
         />
 
         <div className="relative">
+          <p className="text-accent mb-4 text-[10px] font-medium tracking-[0.22em]">LESS BUSYWORK. MORE CREATIVITY.</p>
           <h2 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">
             把商品图交给智能体
           </h2>

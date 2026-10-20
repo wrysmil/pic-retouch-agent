@@ -8,20 +8,20 @@
   --font-sans:
     system-ui, -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
 
-  --color-ink: #171917;
-  --color-muted: #6f746f;
-  --color-faint: #9aa09a;
-  --color-line: #e5e8e4;
-  --color-line-strong: #d7dbd6;
+  --color-ink: #20352f;
+  --color-muted: #65766f;
+  --color-faint: #7d8b84;
+  --color-line: #e3e8e0;
+  --color-line-strong: #d1dbd2;
   --color-paper: #ffffff;
-  --color-canvas: #eff1ee;
-  --color-soft: #f6f7f5;
-  --color-dark: #1e211e;
+  --color-canvas: #f8f9f5;
+  --color-soft: #f2f5ef;
+  --color-dark: #2d4c42;
 
-  --color-brand: #5f98ad;
-  --color-brand-strong: #427f95;
-  --color-brand-soft: #e8f2f5;
-  --color-accent: #d9ff6e;
+  --color-brand: #528da0;
+  --color-brand-strong: #326c7c;
+  --color-brand-soft: #eaf3f2;
+  --color-accent: #d8ef9e;
 
   --color-danger: #d95656;
   --color-success: #3b8a61;
@@ -31,10 +31,10 @@
   --radius-control: 12px;
   --radius-panel: 26px;
 
-  --shadow-card: 0 16px 42px rgb(25 31 26 / 0.09);
-  --shadow-control: 0 8px 22px rgb(27 31 27 / 0.08);
+  --shadow-card: 0 8px 30px -12px rgb(32 53 47 / 0.1);
+  --shadow-control: 0 4px 14px -6px rgb(32 53 47 / 0.12);
   --shadow-lift: 0 20px 46px -18px rgb(20 26 20 / 0.18);
-  --shadow-panel: 0 28px 72px -26px rgb(20 26 20 / 0.3);
+  --shadow-panel: 0 16px 48px -20px rgb(32 53 47 / 0.18);
 
   --ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
 
@@ -269,15 +269,47 @@
 /* 首屏顶部的光晕，为居中的输入面板提供视觉重心 */
 @utility bg-glow {
   background:
-    radial-gradient(62% 52% at 50% -6%, rgb(232 242 245 / 0.95), transparent 72%),
-    radial-gradient(34% 34% at 84% 6%, rgb(217 255 110 / 0.28), transparent 70%);
+    radial-gradient(52% 65% at 22% 15%, rgb(223 239 234 / 0.65), transparent 80%),
+    radial-gradient(40% 60% at 85% 10%, rgb(232 241 212 / 0.55), transparent 78%);
 }
 
 /* 网格底纹，向下淡出以免干扰正文 */
 @utility bg-grid {
   background-image:
-    linear-gradient(to right, rgb(23 25 23 / 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgb(23 25 23 / 0.05) 1px, transparent 1px);
+    linear-gradient(to right, rgb(32 53 47 / 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(32 53 47 / 0.025) 1px, transparent 1px);
   background-size: 56px 56px;
   mask-image: radial-gradient(68% 58% at 50% 0%, #000 10%, transparent 100%);
+}
+
+/* 面向创作者的展示层；保持工具控件的位置与行为。 */
+.studio-composer {
+  box-shadow: 0 0 0 5px rgb(255 255 255 / 0.55), var(--shadow-panel);
+}
+
+.studio-composer:focus-within {
+  box-shadow: 0 0 0 5px rgb(82 141 160 / 0.09), var(--shadow-panel);
+}
+
+.studio-story {
+  background: linear-gradient(115deg, #edf3e6, #f8f9f5 58%, #e9f2f0);
+}
+
+.studio-feature-preview {
+  background: radial-gradient(ellipse at 50% 100%, #e3ede5, #f5f7f2 80%);
+}
+
+.studio-feature:hover .studio-feature-preview {
+  border-color: var(--color-line-strong);
+}
+
+.studio-illustration {
+  mask-image: radial-gradient(ellipse 75% 65% at 50% 55%, #000 52%, transparent 78%);
+}
+
+/* 同一张四宫格摄影素材以等比场景裁切复用，减少首页资源请求。 */
+.studio-product-photo {
+  background-image: url('/illustrations/product-scenes.webp');
+  background-size: 200% 200%;
+  background-repeat: no-repeat;
 }

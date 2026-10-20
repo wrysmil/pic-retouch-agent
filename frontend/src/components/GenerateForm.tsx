@@ -34,7 +34,7 @@ export default function GenerateForm({
           negative_prompt: negative.trim() || undefined,
         })
       }}
-      className="border-line bg-paper shadow-panel rounded-panel border p-2"
+      className="studio-composer border-line bg-paper rounded-panel focus-within:border-brand border p-2.5 transition-[border-color,box-shadow] duration-200"
     >
       <textarea
         rows={3}
@@ -112,7 +112,7 @@ function Segmented<T extends string | number>({
   onChange: (value: T) => void
 }) {
   return (
-    <div className="border-line rounded-control flex items-center gap-0.5 border p-0.5">
+    <div className="border-line rounded-control flex max-w-full flex-wrap items-center gap-0.5 border p-0.5">
       <span className="text-faint px-1.5 text-xs">{label}</span>
       {options.map((option) => (
         <button

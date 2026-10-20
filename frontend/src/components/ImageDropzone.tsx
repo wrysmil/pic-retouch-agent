@@ -41,9 +41,16 @@ export default function ImageDropzone({ onFile, disabled, hint, multiple }: Prop
           else accept(files[0])
         }}
         className={`flex w-full flex-col items-center gap-1.5 rounded-[18px] border border-dashed px-6 py-10 transition-colors disabled:opacity-50 ${
-          dragging ? 'border-brand bg-brand-soft' : 'border-line-strong bg-paper hover:border-brand'
+          dragging ? 'border-brand bg-brand-soft' : 'border-line-strong bg-paper/80 hover:border-brand hover:bg-brand-soft/40'
         }`}
       >
+        <span className="border-line bg-soft text-brand-strong mb-2 grid size-11 place-items-center rounded-2xl border" aria-hidden>
+          <svg viewBox="0 0 24 24" fill="none" className="size-5">
+            <rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" strokeWidth="1.5" />
+            <circle cx="8" cy="9" r="1.5" fill="currentColor" />
+            <path d="m4 17 5-5 4 4 3-3 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
         <span className="text-ink text-sm font-medium">
           {disabled ? '上传中…' : multiple ? '拖入多张图片，或点击选择' : '拖入图片，或点击选择'}
         </span>

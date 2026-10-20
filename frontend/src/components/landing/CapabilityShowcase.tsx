@@ -27,9 +27,9 @@ const CAPABILITIES: { title: string; desc: string; preview: ReactNode }[] = [
 
 export default function CapabilityShowcase() {
   return (
-    <section className="mx-auto max-w-5xl px-6 py-16">
+    <section className="mx-auto max-w-5xl px-6 pt-12 pb-16">
       <header className="max-w-xl">
-        <p className="text-brand-strong text-sm font-medium">能力</p>
+        <p className="text-brand-strong text-xs font-semibold tracking-[0.16em]">能力</p>
         <h2 className="text-ink mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">
           不只是生成一张好看的图
         </h2>
@@ -39,15 +39,15 @@ export default function CapabilityShowcase() {
       </header>
 
       <div className="mt-10 grid gap-5 sm:grid-cols-2">
-        {CAPABILITIES.map((item) => (
+        {CAPABILITIES.map((item, index) => (
           <article
             key={item.title}
-            className="border-line bg-paper rounded-card hover:shadow-lift border p-6 transition-shadow"
+            className="studio-feature border-line bg-paper rounded-card shadow-card hover:shadow-lift border p-5 transition-shadow duration-300 sm:p-6"
           >
-            <div className="bg-soft border-line/70 mb-6 flex h-44 items-center justify-center overflow-hidden rounded-[14px] border px-5 py-4">
+            <div className="studio-feature-preview border-line/70 mb-6 flex h-48 items-center justify-center overflow-hidden rounded-[14px] border px-5 py-6 transition-colors">
               {item.preview}
             </div>
-            <h3 className="text-ink font-medium">{item.title}</h3>
+            <div className="flex items-center gap-3"><span className="text-brand-strong/70 font-mono text-[11px]">0{index + 1}</span><h3 className="text-ink font-semibold">{item.title}</h3></div>
             <p className="text-muted mt-2 text-sm leading-relaxed">{item.desc}</p>
           </article>
         ))}
