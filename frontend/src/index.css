@@ -8,47 +8,67 @@
   --font-sans:
     system-ui, -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
 
-  --color-ink: #171917;
-  --color-muted: #6f746f;
-  --color-faint: #9aa09a;
-  --color-line: #e5e8e4;
-  --color-line-strong: #d7dbd6;
-  --color-paper: #ffffff;
-  --color-canvas: #eff1ee;
-  --color-soft: #f6f7f5;
-  --color-dark: #1e211e;
+  /* 品牌影像工作室：墨黑外壳 / 暖石工作区 / 象牙面板 / 信号青柠 / 工作青绿 */
+  --color-shell: #101311;
+  --color-shell-2: #191d1a;
+  --color-shell-3: #222824;
+  --color-shell-line: #2c332f;
+  --color-shell-ink: #f4f5f0;
+  --color-shell-muted: #98a29b;
+  --color-work: #ece9e2;
+  --color-panel: #f8f6f1;
+  --color-panel-2: #f0eee8;
+  --color-signal: #d9ff6e;
+  --color-signal-soft: #f2ffd0;
+  --color-signal-ink: #18200d;
+  --color-ai: #6fb4a5;
+  --color-ai-strong: #347d6d;
+  --color-ai-soft: #e0eee8;
 
-  --color-brand: #5f98ad;
-  --color-brand-strong: #427f95;
-  --color-brand-soft: #e8f2f5;
+  --color-ink: #18201d;
+  --color-muted: #66706a;
+  --color-faint: #8b938d;
+  --color-line: #d7d9d2;
+  --color-line-strong: #c2c6be;
+  --color-paper: #f8f6f1;
+  --color-canvas: #ece9e2;
+  --color-soft: #f0eee8;
+  --color-dark: #1e231f;
+
+  /* brand 在浅色面上承担链接、焦点与 AI 状态；深色面用 ai 提亮 */
+  --color-brand: #347d6d;
+  --color-brand-strong: #2c6a5c;
+  --color-brand-soft: #e0eee8;
   --color-accent: #d9ff6e;
 
-  --color-danger: #d95656;
-  --color-success: #3b8a61;
+  --color-danger: #b94a3f;
+  --color-success: #3f7d5f;
 
   --radius-chip: 8px;
-  --radius-card: 18px;
-  --radius-control: 12px;
-  --radius-panel: 26px;
+  --radius-card: 16px;
+  --radius-control: 10px;
+  --radius-panel: 20px;
 
-  --shadow-card: 0 16px 42px rgb(25 31 26 / 0.09);
-  --shadow-control: 0 8px 22px rgb(27 31 27 / 0.08);
-  --shadow-lift: 0 20px 46px -18px rgb(20 26 20 / 0.18);
-  --shadow-panel: 0 28px 72px -26px rgb(20 26 20 / 0.3);
+  /* 只有浮动命令条、菜单与弹层使用投影；常规面板靠边线与底色分层 */
+  --shadow-card: 0 10px 30px -24px rgb(16 19 17 / 0.28);
+  --shadow-control: 0 1px 2px rgb(16 19 17 / 0.06);
+  --shadow-lift: 0 18px 44px -28px rgb(16 19 17 / 0.34);
+  --shadow-panel: 0 26px 70px -34px rgb(16 19 17 / 0.4);
+  --shadow-float: 0 18px 44px -14px rgb(0 0 0 / 0.42);
 
   --ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
 
-  --animate-rise: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
-  --animate-pop: pop 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
-  --animate-fade-out: fade-out 0.18s ease-in both;
-  --animate-slide-in: slide-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
-  --animate-slide-out: slide-out 0.2s ease-in both;
-  --animate-fade-in: fade-in 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-rise: rise 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-pop: pop 0.18s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade-out: fade-out 0.16s ease-in both;
+  --animate-slide-in: slide-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-slide-out: slide-out 0.18s ease-in both;
+  --animate-fade-in: fade-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) both;
 
   @keyframes rise {
     from {
       opacity: 0;
-      transform: translate3d(0, 14px, 0);
+      transform: translate3d(0, 8px, 0);
     }
     to {
       opacity: 1;
@@ -59,7 +79,7 @@
   @keyframes pop {
     from {
       opacity: 0;
-      transform: translate3d(0, 10px, 0) scale(0.96);
+      transform: translate3d(0, 6px, 0) scale(0.98);
     }
     to {
       opacity: 1;
@@ -81,7 +101,7 @@
   @keyframes slide-in {
     from {
       opacity: 0;
-      transform: translate3d(16px, 0, 0);
+      transform: translate3d(12px, 0, 0);
     }
     to {
       opacity: 1;
@@ -96,7 +116,7 @@
     }
     to {
       opacity: 0;
-      transform: translate3d(16px, 0, 0);
+      transform: translate3d(12px, 0, 0);
     }
   }
 
@@ -190,11 +210,31 @@
   }
 
   body {
-    @apply bg-canvas text-ink font-sans antialiased;
+    @apply bg-work text-ink font-sans antialiased;
+  }
+
+  ::selection {
+    background: var(--color-signal);
+    color: var(--color-signal-ink);
   }
 
   :focus-visible {
     @apply outline-brand outline-2 outline-offset-2;
+  }
+
+  /* 深色工作区里的焦点改用青绿，避免墨色焦点圈看不见 */
+  .on-dark :focus-visible {
+    outline-color: var(--color-ai);
+  }
+
+  /* 后台独立主题：焦点与选区保持原控制台蓝色，不继承工作台信号色 */
+  .ad-root :focus-visible {
+    outline-color: var(--color-ad-primary);
+  }
+
+  .ad-root ::selection {
+    background: #dbe5fb;
+    color: var(--color-ad-ink);
   }
 
   /* 滑杆是修图里最高频的控件，统一做成跟手的细轨道加浮起滑块 */
@@ -234,6 +274,24 @@
     @apply bg-paper border-line-strong size-4 appearance-none rounded-full border;
   }
 
+  .on-dark input[type='range']::-webkit-slider-runnable-track {
+    background: var(--color-shell-line);
+  }
+
+  .on-dark input[type='range']::-webkit-slider-thumb {
+    background: var(--color-ai);
+    border-color: #2a3934;
+  }
+
+  .on-dark input[type='range']::-moz-range-track {
+    background: var(--color-shell-line);
+  }
+
+  .on-dark input[type='range']::-moz-range-thumb {
+    background: var(--color-ai);
+    border-color: #2a3934;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -266,18 +324,73 @@
   }
 }
 
-/* 首屏顶部的光晕，为居中的输入面板提供视觉重心 */
+/* 首屏只留极轻的暖光，不做大面积炫光 */
 @utility bg-glow {
   background:
-    radial-gradient(62% 52% at 50% -6%, rgb(232 242 245 / 0.95), transparent 72%),
-    radial-gradient(34% 34% at 84% 6%, rgb(217 255 110 / 0.28), transparent 70%);
+    radial-gradient(58% 46% at 50% -8%, rgb(248 246 241 / 0.9), transparent 74%),
+    radial-gradient(26% 24% at 84% 2%, rgb(217 255 110 / 0.16), transparent 72%);
 }
 
 /* 网格底纹，向下淡出以免干扰正文 */
 @utility bg-grid {
   background-image:
-    linear-gradient(to right, rgb(23 25 23 / 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgb(23 25 23 / 0.05) 1px, transparent 1px);
+    linear-gradient(to right, rgb(24 32 29 / 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(24 32 29 / 0.045) 1px, transparent 1px);
   background-size: 56px 56px;
   mask-image: radial-gradient(68% 58% at 50% 0%, #000 10%, transparent 100%);
+}
+
+/* 暗房画布：中性深灰，中心略亮，让图片成为唯一视觉主体 */
+@utility bg-stage {
+  background:
+    radial-gradient(62% 58% at 50% 42%, #303632 0%, #242925 52%, #1a1e1b 100%);
+}
+
+/* 透明底的棋盘格，用于素材预览 */
+@utility bg-checker {
+  background-color: #e3e5df;
+  background-image:
+    linear-gradient(45deg, #d4d7d0 25%, transparent 25%),
+    linear-gradient(-45deg, #d4d7d0 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #d4d7d0 75%),
+    linear-gradient(-45deg, transparent 75%, #d4d7d0 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+}
+
+/* 深色面板里的细滚动条 */
+@utility scrollbar-dark {
+  scrollbar-width: thin;
+  scrollbar-color: #3a433d transparent;
+
+  &::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background-color: #3a433d;
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* 细发丝线分隔，避免大量盒阴影 */
+@utility hairline {
+  box-shadow: inset 0 0 0 1px var(--color-line);
+}
+
+/* 编号、尺寸、版本号使用等宽数字 */
+@utility num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
 }

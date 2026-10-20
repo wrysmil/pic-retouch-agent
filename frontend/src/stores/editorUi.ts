@@ -27,7 +27,15 @@ export type LayerPreview = {
   text?: string
 }
 
-export type Panel = 'layers' | 'adjust' | 'background' | 'expand' | 'replace' | null
+export type Panel =
+  | 'director'
+  | 'layers'
+  | 'properties'
+  | 'adjust'
+  | 'background'
+  | 'expand'
+  | 'replace'
+  | null
 
 type EditorUi = {
   selectedLayerId: string | null
@@ -37,6 +45,8 @@ type EditorUi = {
   compareOpen: boolean
   compareAt: number
   panel: Panel
+  // 窄屏下右侧面板是抽屉；桌面端面板常驻，此状态不影响布局
+  inspectorOpen: boolean
   selectMode: SelectMode | null
   selection: CanvasSelection | null
   splitIncludeText: boolean
@@ -50,6 +60,7 @@ type EditorUi = {
   setCompareOpen: (open: boolean) => void
   setCompareAt: (value: number) => void
   setPanel: (panel: Panel) => void
+  setInspectorOpen: (open: boolean) => void
   setSelectMode: (mode: SelectMode | null) => void
   setSelection: (selection: CanvasSelection | null) => void
   dropStaleSelection: (revision: number) => void
@@ -93,7 +104,8 @@ export const useEditorUi = create<EditorUi>((set) => ({
   cropRect: null,
   compareOpen: false,
   compareAt: 0.5,
-  panel: null,
+  panel: 'director',
+  inspectorOpen: false,
   selectMode: null,
   selection: null,
   splitIncludeText: false,
@@ -133,7 +145,15 @@ export const useEditorUi = create<EditorUi>((set) => ({
 
   setCompareAt: (compareAt) => set({ compareAt }),
 
-  setPanel: (panel) => set({ panel, adjustPreview: null, layerPreview: null }),
+  setPanel: (panel) =>
+    set({
+      panel,
+      inspectorOpen: panel !== null,
+      adjustPreview: null,
+      layerPreview: null,
+    }),
+
+  setInspectorOpen: (inspectorOpen) => set({ inspectorOpen }),
 
   setSelectMode: (selectMode) =>
     set((state) => ({
@@ -141,7 +161,7 @@ export const useEditorUi = create<EditorUi>((set) => ({
       cropOpen: false,
       compareOpen: false,
       cropRect: selectMode ? null : state.cropRect,
-      panel: selectMode ? null : withoutReplace(state.panel),
+      panel: withoutReplace(state.panel),
     })),
 
   setSelection: (selection) => set({ selection }),

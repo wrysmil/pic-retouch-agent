@@ -76,16 +76,22 @@ export function useSessionTools(id: string) {
   const queryClient = useQueryClient()
   const cache = useCacheSession(id)
   const [pendingRunId, setPendingRunId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const live = useRun(pendingRunId)
 
   const invoke = useMutation({
     mutationFn: ({ tool, params }: { tool: string; params?: Record<string, unknown> }) =>
       sessionsApi.invoke(id, tool, params),
+    onMutate: () => setError(null),
     onSuccess: (body) => {
       cache(body.session)
       if (!isTerminal(body.run.status)) setPendingRunId(body.run.id)
     },
-    onError: (error) => toast(errorMessage(error), 'danger'),
+    onError: (cause) => {
+      const message = errorMessage(cause)
+      setError(message)
+      toast(message, 'danger')
+    },
   })
 
   // 撤销是链式的，上一次没落定就再点一次会连着回退好几步
@@ -96,14 +102,24 @@ export function useSessionTools(id: string) {
 
   const undo = useMutation({
     mutationFn: () => sessionsApi.undo(id),
+    onMutate: () => setError(null),
     onSuccess: cache,
-    onError: (error) => toast(errorMessage(error), 'danger'),
+    onError: (cause) => {
+      const message = errorMessage(cause)
+      setError(message)
+      toast(message, 'danger')
+    },
     onSettled: unlockHistory,
   })
   const redo = useMutation({
     mutationFn: () => sessionsApi.redo(id),
+    onMutate: () => setError(null),
     onSuccess: cache,
-    onError: (error) => toast(errorMessage(error), 'danger'),
+    onError: (cause) => {
+      const message = errorMessage(cause)
+      setError(message)
+      toast(message, 'danger')
+    },
     onSettled: unlockHistory,
   })
 
@@ -124,9 +140,12 @@ export function useSessionTools(id: string) {
     void queryClient.invalidateQueries({ queryKey: detailKey(id) })
     void queryClient.invalidateQueries({ queryKey: historyKey(id) })
     if (live.status === 'failed') {
-      toast(live.error || '处理失败', 'danger')
+      const message = live.error || '处理失败'
+      setError(message)
+      toast(message, 'danger')
       return
     }
+    setError(null)
     const label = toolLabel(pendingTool)
     toast(
       label ? `${label}完成` : live.stage || '已完成',
@@ -162,6 +181,8 @@ export function useSessionTools(id: string) {
     pending: waiting,
     pendingStage: waiting ? live.stage : '',
     pendingProgress: waiting ? live.progress : 0,
+    error,
+    clearError: () => setError(null),
   }
 }
 

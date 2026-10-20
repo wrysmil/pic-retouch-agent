@@ -8,6 +8,7 @@ import CandidatesPage from '@/pages/CandidatesPage'
 import CreatePage from '@/pages/CreatePage'
 import EditorPage from '@/pages/EditorPage'
 import LandingPage from '@/pages/LandingPage'
+import LibraryPage from '@/pages/LibraryPage'
 import MarketingPage from '@/pages/MarketingPage'
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
         <Route element={<RequireAuth />}>
           <Route element={<WorkbenchLayout />}>
             <Route path="/create" element={<CreatePage />} />
+            <Route path="/library" element={<LibraryPage />} />
             <Route path="/editor" element={<EditorPage />} />
             <Route path="/editor/:sessionId" element={<EditorPage />} />
             <Route path="/marketing" element={<MarketingPage />} />

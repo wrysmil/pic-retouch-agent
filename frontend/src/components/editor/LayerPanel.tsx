@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 
 import type { Asset } from '@/api/assets'
 import { ACTION_LABELS, type Layer, type SessionDetail } from '@/api/sessions'
+import AgentConversation from '@/components/editor/AgentConversation'
 import { BackgroundForm, ExpandForm, ReplaceForm } from '@/components/editor/GenerateEdits'
 import Button from '@/components/ui/Button'
+import Icon, { type IconName } from '@/components/ui/Icon'
 import { useSessionHistory, type SessionTools } from '@/hooks/useSessions'
 import { formatBytes, formatDateTime } from '@/lib/format'
 import { wallOnly } from '@/lib/layers'
@@ -30,6 +32,10 @@ const REORDER_LABELS = {
   bottom: '置底',
 } as const
 
+type Tab = 'director' | 'layers' | 'properties'
+
+const TOOL_PANELS: Panel[] = ['adjust', 'background', 'expand', 'replace']
+
 export default function LayerPanel({
   session,
   tools,
@@ -37,10 +43,174 @@ export default function LayerPanel({
 }: {
   session: SessionDetail
   tools: SessionTools
-  // 由外层传入，关闭动画期间仍能画出原来的表单，不会先塌一半
-  panel: Panel
+  panel: Exclude<Panel, null>
 }) {
-  const current = session.assets.find((asset) => asset.id === session.current_asset_id)
+  const setPanel = useEditorUi((state) => state.setPanel)
+  const tab: Tab =
+    panel === 'director' ? 'director' : panel === 'layers' ? 'layers' : 'properties'
+  const title =
+    panel === 'adjust'
+      ? '调色'
+      : panel === 'background'
+        ? '换背景'
+        : panel === 'expand'
+          ? '扩图'
+          : panel === 'replace'
+            ? '局部替换'
+            : tab === 'director'
+              ? 'AI 导演'
+              : tab === 'layers'
+                ? '图层'
+                : '属性与工具'
+
+  const openTab = (next: Tab) => {
+    if (next === 'properties') {
+      if (TOOL_PANELS.includes(panel)) return
+      setPanel('properties')
+      return
+    }
+    setPanel(next)
+  }
+
+  return (
+    <aside className="border-shell-line bg-shell-2 on-dark flex h-full w-full flex-col border-l lg:w-[304px] lg:shrink-0">
+      <header className="border-shell-line shrink-0 border-b px-3 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <p className="num text-[9px] tracking-[0.16em] text-shell-muted uppercase">Inspector</p>
+            <h1 className="text-shell-ink mt-0.5 truncate text-[13px] font-semibold">{title}</h1>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPanel(null)}
+            aria-label="关闭面板"
+            title="关闭面板"
+            className="text-shell-muted hover:bg-shell-3 hover:text-shell-ink grid size-8 shrink-0 place-items-center rounded-control transition-colors"
+          >
+            <Icon name="x" size={16} />
+          </button>
+        </div>
+        <div
+          className="bg-shell border-shell-line mt-2.5 grid grid-cols-3 rounded-control border p-0.5"
+          role="tablist"
+          aria-label="右侧面板"
+        >
+          {(
+            [
+              { id: 'director' as const, label: 'AI 导演', icon: 'message' as const },
+              { id: 'layers' as const, label: '图层', icon: 'layers' as const },
+              { id: 'properties' as const, label: '属性', icon: 'sliders' as const },
+            ] satisfies { id: Tab; label: string; icon: IconName }[]
+          ).map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.id}
+              onClick={() => openTab(item.id)}
+              className={`flex min-h-8 items-center justify-center gap-1 rounded-[7px] text-[10px] font-medium transition-colors duration-150 ${
+                tab === item.id
+                  ? 'bg-shell-3 text-shell-ink'
+                  : 'text-shell-muted hover:text-shell-ink'
+              }`}
+            >
+              <Icon name={item.icon} size={12} />
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </header>
+
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <div className={`h-full ${tab === 'director' ? 'block' : 'hidden'}`}>
+          <DirectorPane session={session} />
+        </div>
+        <div className={`scrollbar-dark h-full overflow-y-auto ${tab === 'layers' ? 'block' : 'hidden'}`}>
+          <LayersPane session={session} tools={tools} />
+        </div>
+        <div className={`scrollbar-dark h-full overflow-y-auto ${tab === 'properties' ? 'block' : 'hidden'}`}>
+          <PropertiesPane session={session} tools={tools} panel={panel} />
+        </div>
+      </div>
+    </aside>
+  )
+}
+
+function DirectorPane({ session }: { session: SessionDetail }) {
+  const ui = useEditorUi()
+  const selectedLayerId = ui.selectedLayerId
+  const selection = ui.selection
+  const freshSelection = selection && selection.revision === session.revision ? selection : null
+  const selected = selectedLayerId
+    ? session.document.layers.find((layer) => layer.id === selectedLayerId)
+    : undefined
+  const thumb = selected?.asset_id
+    ? session.assets.find((asset) => asset.id === selected.asset_id)
+    : undefined
+
+  const scope = freshSelection
+    ? '当前选区'
+    : selected
+      ? `当前图层 · ${selected.name}`
+      : '整张图片'
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="border-shell-line shrink-0 border-b p-3">
+        <div className="border-shell-line bg-shell rounded-control border p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="num text-[9px] tracking-[0.1em] text-shell-muted">当前上下文</span>
+            <span className="bg-ai/15 text-ai rounded-full px-2 py-0.5 text-[9px]">
+              {freshSelection ? '选区' : selected ? '图层' : '整图'}
+            </span>
+          </div>
+          <div className="mt-2 flex items-center gap-2.5">
+            {freshSelection ? (
+              <span className="bg-checker border-shell-line size-10 shrink-0 overflow-hidden rounded-chip border">
+                <img src={freshSelection.maskUrl} alt="" className="size-full object-cover" />
+              </span>
+            ) : thumb ? (
+              <span className="bg-shell-3 border-shell-line size-10 shrink-0 overflow-hidden rounded-chip border">
+                <img src={thumb.url} alt="" className="size-full object-cover" />
+              </span>
+            ) : (
+              <span className="bg-shell-3 border-shell-line text-ai grid size-10 shrink-0 place-items-center rounded-chip border">
+                <Icon name={selected?.kind === 'text' ? 'type' : 'image'} size={16} />
+              </span>
+            )}
+            <div className="min-w-0">
+              <p className="truncate text-[11px] font-medium text-shell-ink">
+                {freshSelection ? '已识别的编辑区域' : (selected?.name ?? '整张图片')}
+              </p>
+              <p className="mt-0.5 truncate text-[10px] text-shell-muted">
+                {freshSelection
+                  ? `${freshSelection.markers.length} 个标点 · 只改选区内部`
+                  : selected
+                    ? selected.kind === 'text'
+                      ? '文字图层'
+                      : selected.locked
+                        ? '图像图层 · 已锁定'
+                        : '图像图层'
+                    : '没有选中图层，作用于整张图'}
+              </p>
+            </div>
+          </div>
+          <div className="mt-2.5 flex items-start gap-1.5 border-t border-shell-line pt-2.5 text-[10px] leading-relaxed text-shell-muted">
+            <Icon name="shield" size={12} className="mt-0.5 shrink-0 text-signal" />
+            <span>多步修改会先列出计划，确认后才执行；每次结果都可撤销。</span>
+          </div>
+          <div className="mt-2 text-[10px] text-shell-muted">
+            作用范围：<span className="text-shell-ink">{scope}</span>
+          </div>
+        </div>
+      </div>
+
+      <AgentConversation sessionId={session.id} />
+    </div>
+  )
+}
+
+function LayersPane({ session, tools }: { session: SessionDetail; tools: SessionTools }) {
   const { data: history = [] } = useSessionHistory(session.id)
   const selectedLayerId = useEditorUi((state) => state.selectedLayerId)
   const selectLayer = useEditorUi((state) => state.selectLayer)
@@ -50,58 +220,25 @@ export default function LayerPanel({
   const selected =
     session.document.layers.find((layer) => layer.id === selectedLayerId) ??
     session.document.layers.at(-1)
-  const onlyToWall = wallOnly(session.document)
 
   return (
-    <aside className="border-line bg-paper scrollbar-slim h-full w-72 shrink-0 overflow-y-auto border-l">
-      {panel === 'adjust' && (
-        <AdjustForm
-          disabled={tools.busy}
-          onApply={(params) => tools.invoke('adjust_image', { ...params, layer_id: selectedLayerId })}
-        />
-      )}
-      {panel === 'background' && (
-        <BackgroundForm
-          disabled={tools.busy}
-          wallOnly={onlyToWall}
-          onApply={(params) => tools.invoke('replace_background', params)}
-        />
-      )}
-      {panel === 'expand' && (
-        <ExpandForm
-          disabled={tools.busy}
-          wallOnly={onlyToWall}
-          onApply={(params) => tools.invoke('expand_canvas', params)}
-        />
-      )}
-      {panel === 'replace' && (
-        <ReplaceForm
-          disabled={tools.busy || !selection}
-          onApply={(params) =>
-            tools.invoke('replace_region', {
-              ...params,
-              mask_asset_id: selection?.maskId,
-              revision: session.revision,
-              layer_id: selectedLayerId,
-            })
-          }
-        />
-      )}
-
-      <Section title="图层">
-        <label className="text-muted mb-2 flex items-center gap-1.5 text-[11px]">
+    <div>
+      <Section title="图层" icon="layers">
+        <label className="mb-2 flex items-center gap-1.5 text-[10px] text-shell-muted">
           <input
             type="checkbox"
             checked={includeText}
             disabled={tools.busy}
             onChange={(event) => setIncludeText(event.target.checked)}
+            className="accent-ai"
           />
           同时拆出文字
         </label>
-        <div className="mb-2.5 flex gap-1">
+        <div className="mb-2.5 flex gap-1.5">
           <Button
             variant="outline"
             size="sm"
+            tone="dark"
             block
             disabled={tools.busy}
             progress={tools.isRunning('split_layers') ? tools.pendingProgress : null}
@@ -113,6 +250,7 @@ export default function LayerPanel({
           <Button
             variant="outline"
             size="sm"
+            tone="dark"
             block
             disabled={tools.busy || !selection}
             progress={tools.isRunning('promote_object_to_layer') ? tools.pendingProgress : null}
@@ -149,8 +287,8 @@ export default function LayerPanel({
       </Section>
 
       {selected?.kind === 'text' && (
-        <Section title="文字">
-          <p className="text-faint mb-2.5 text-[11px] leading-relaxed">
+        <Section title="文字" icon="type">
+          <p className="mb-2.5 text-[10px] leading-relaxed text-shell-muted">
             改文案、字号或颜色。失焦写入，可用 ⌘Z 撤销。画布上双击文字层也可改。
           </p>
           <TextForm
@@ -164,18 +302,15 @@ export default function LayerPanel({
       )}
 
       {selected && (
-        <Section title="变换">
-          <p className="text-faint mb-2.5 text-[11px] leading-relaxed">
+        <Section title="变换" icon="move">
+          <p className="mb-2.5 text-[10px] leading-relaxed text-shell-muted">
             选中图层后拖角缩放、拖动画布移动。滑杆也可改，松手写入，可用 ⌘Z 撤销。
           </p>
           <LayerControls
             layer={selected}
             disabled={tools.busy}
             onOpacity={(opacity) =>
-              tools.invoke('set_layer_opacity', {
-                layer_id: selected.id,
-                opacity,
-              })
+              tools.invoke('set_layer_opacity', { layer_id: selected.id, opacity })
             }
             onScale={(scale) =>
               tools.invoke('scale_layer', {
@@ -192,27 +327,192 @@ export default function LayerPanel({
         </Section>
       )}
 
-      <Section title="属性">
-        <Properties document={session.document} current={current} revision={session.revision} />
-      </Section>
-
-      <Section title="编辑记录">
+      <Section title="编辑记录" icon="history">
         {history.length === 0 ? (
-          <p className="text-faint text-xs">暂无记录</p>
+          <p className="text-[10px] text-shell-muted">暂无记录</p>
         ) : (
           <ol className="space-y-1.5">
             {history.map((entry) => (
-              <li key={entry.seq} className="flex items-baseline justify-between gap-2 text-xs">
-                <span className="text-ink">{ACTION_LABELS[entry.action] ?? entry.action}</span>
-                <span className="text-faint shrink-0 tabular-nums">
-                  {formatDateTime(entry.created_at)}
-                </span>
+              <li key={entry.seq} className="flex items-baseline justify-between gap-2 text-[10px]">
+                <span className="text-shell-ink">{ACTION_LABELS[entry.action] ?? entry.action}</span>
+                <span className="num shrink-0 text-shell-muted">{formatDateTime(entry.created_at)}</span>
               </li>
             ))}
           </ol>
         )}
       </Section>
-    </aside>
+    </div>
+  )
+}
+
+function PropertiesPane({
+  session,
+  tools,
+  panel,
+}: {
+  session: SessionDetail
+  tools: SessionTools
+  panel: Exclude<Panel, null>
+}) {
+  const selectedLayerId = useEditorUi((state) => state.selectedLayerId)
+  const selection = useEditorUi((state) => state.selection)
+  const setPanel = useEditorUi((state) => state.setPanel)
+  const includeText = useEditorUi((state) => state.splitIncludeText)
+  const current = session.assets.find((asset) => asset.id === session.current_asset_id)
+  const onlyToWall = wallOnly(session.document)
+  const inTool = TOOL_PANELS.includes(panel)
+
+  return (
+    <div>
+      {inTool && (
+        <div className="border-shell-line border-b px-4 py-2.5">
+          <button
+            type="button"
+            onClick={() => setPanel('properties')}
+            className="inline-flex items-center gap-1 text-[10px] text-shell-muted transition-colors hover:text-shell-ink"
+          >
+            <Icon name="arrow-left" size={12} />
+            返回更多工具
+          </button>
+        </div>
+      )}
+
+      {panel === 'adjust' && (
+        <AdjustForm
+          disabled={tools.busy}
+          onApply={(params) => tools.invoke('adjust_image', { ...params, layer_id: selectedLayerId })}
+        />
+      )}
+      {panel === 'background' && (
+        <BackgroundForm
+          disabled={tools.busy}
+          wallOnly={onlyToWall}
+          onApply={(params) => tools.invoke('replace_background', params)}
+        />
+      )}
+      {panel === 'expand' && (
+        <ExpandForm
+          disabled={tools.busy}
+          wallOnly={onlyToWall}
+          onApply={(params) => tools.invoke('expand_canvas', params)}
+        />
+      )}
+      {panel === 'replace' && (
+        <ReplaceForm
+          disabled={tools.busy || !selection}
+          onApply={(params) =>
+            tools.invoke('replace_region', {
+              ...params,
+              mask_asset_id: selection?.maskId,
+              revision: session.revision,
+              layer_id: selectedLayerId,
+            })
+          }
+        />
+      )}
+
+      {!inTool && (
+        <Section title="更多工具" icon="wand">
+          <p className="mb-2.5 text-[10px] leading-relaxed text-shell-muted">
+            低频操作集中在这里，不占用画布上沿。
+          </p>
+          <div className="grid grid-cols-2 gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              tone="dark"
+              block
+              disabled={tools.busy}
+              progress={
+                tools.isRunning('flip_layer', (params) => params.direction === 'horizontal')
+                  ? tools.pendingProgress
+                  : null
+              }
+              onClick={() =>
+                tools.invoke('flip_layer', {
+                  direction: 'horizontal',
+                  layer_id: selectedLayerId,
+                })
+              }
+            >
+              水平翻转
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              tone="dark"
+              block
+              disabled={tools.busy}
+              progress={
+                tools.isRunning('flip_layer', (params) => params.direction === 'vertical')
+                  ? tools.pendingProgress
+                  : null
+              }
+              onClick={() =>
+                tools.invoke('flip_layer', {
+                  direction: 'vertical',
+                  layer_id: selectedLayerId,
+                })
+              }
+            >
+              垂直翻转
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              tone="dark"
+              block
+              disabled={tools.busy}
+              progress={tools.isRunning('upscale_image') ? tools.pendingProgress : null}
+              title={
+                onlyToWall
+                  ? '放大到两倍，已拆层所以结果只进图片墙'
+                  : '把当前画布放大到两倍'
+              }
+              onClick={() => tools.invoke('upscale_image', { scale: 2 })}
+            >
+              超分 2×
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              tone="dark"
+              block
+              disabled={tools.busy}
+              progress={tools.isRunning('split_layers') ? tools.pendingProgress : null}
+              title="拆成背景和主体，文字需额外勾选，可撤销"
+              onClick={() => tools.invoke('split_layers', { include_text: includeText })}
+            >
+              拆层
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              tone="dark"
+              block
+              disabled={tools.busy}
+              onClick={() => setPanel('expand')}
+            >
+              扩图
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              tone="dark"
+              block
+              disabled={tools.busy}
+              onClick={() => setPanel('background')}
+            >
+              换背景
+            </Button>
+          </div>
+        </Section>
+      )}
+
+      <Section title="画布属性" icon="file-image">
+        <Properties document={session.document} current={current} revision={session.revision} />
+      </Section>
+    </div>
   )
 }
 
@@ -233,8 +533,10 @@ function LayerRow({
 }) {
   return (
     <li
-      className={`rounded-control flex items-center border transition-all duration-150 ${
-        active ? 'border-brand bg-brand-soft' : 'border-line hover:border-line-strong hover:bg-soft'
+      className={`flex items-center rounded-control border transition-colors duration-150 ${
+        active
+          ? 'border-ai/45 bg-ai/10'
+          : 'border-shell-line hover:border-shell-line hover:bg-shell-3/60'
       } ${layer.visible ? '' : 'opacity-50'}`}
     >
       <button
@@ -242,59 +544,42 @@ function LayerRow({
         onClick={onSelect}
         className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
       >
-        <span className="bg-canvas border-line rounded-chip size-8 shrink-0 overflow-hidden border">
+        <span className="bg-shell-3 border-shell-line size-8 shrink-0 overflow-hidden rounded-chip border">
           {thumb ? (
             <img src={thumb.url} alt="" className="size-full object-cover" />
           ) : (
-            <span className="text-faint grid size-full place-items-center text-[10px]">
-              {layer.kind === 'text' ? '文' : ''}
+            <span className="text-ai grid size-full place-items-center">
+              <Icon name={layer.kind === 'text' ? 'type' : 'image'} size={13} />
             </span>
           )}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="text-ink block truncate text-xs font-medium">{layer.name}</span>
-          <span className="text-faint block truncate text-[10px]">
+          <span className="block truncate text-[11px] font-medium text-shell-ink">{layer.name}</span>
+          <span className="block truncate text-[9px] text-shell-muted">
             {layer.kind === 'text' ? layer.text || '文字' : layer.locked ? '已锁定' : '图像'}
           </span>
         </span>
-        <span className="text-faint shrink-0 text-[10px] tabular-nums">
+        <span className="num shrink-0 text-[9px] text-shell-muted">
           {Math.round(layer.opacity * 100)}%
         </span>
       </button>
       <Button
         variant="icon"
         size="sm"
+        tone="dark"
         disabled={disabled}
         title={layer.visible ? '隐藏图层' : '显示图层'}
         onClick={onToggleVisible}
-        className="mr-1.5 shrink-0"
+        className="mr-1 shrink-0"
       >
-        <EyeIcon open={layer.visible} />
+        <Icon name={layer.visible ? 'eye' : 'eye-off'} size={14} />
       </Button>
     </li>
   )
 }
 
-function EyeIcon({ open }: { open: boolean }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8Z"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinejoin="round"
-      />
-      {open ? (
-        <circle cx="8" cy="8" r="1.7" fill="currentColor" />
-      ) : (
-        <path d="M3 13 13 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-      )}
-    </svg>
-  )
-}
-
 const TEXT_FIELD =
-  'border-line text-ink placeholder:text-faint rounded-control focus:border-line-strong w-full resize-none border px-2.5 py-1.5 text-xs leading-relaxed outline-none'
+  'border-shell-line bg-shell-3 text-shell-ink placeholder:text-shell-muted focus:border-ai/60 w-full resize-none rounded-control border px-2.5 py-1.5 text-[11px] leading-relaxed outline-none'
 
 function toHex6(value: string) {
   const raw = value.replace('#', '')
@@ -377,13 +662,13 @@ function TextForm({
           commit({ text, font_size: value, fill })
         }}
       />
-      <label className="flex items-center justify-between gap-2 text-[11px]">
-        <span className="text-muted">颜色</span>
+      <label className="flex items-center justify-between gap-2 text-[10px]">
+        <span className="text-shell-muted">颜色</span>
         <input
           type="color"
           value={fill}
           disabled={disabled}
-          className="border-line h-7 w-12 cursor-pointer rounded border bg-transparent p-0"
+          className="border-shell-line h-7 w-12 cursor-pointer rounded border bg-transparent p-0"
           onChange={(event) => {
             const next = event.target.value
             setFill(next)
@@ -487,6 +772,7 @@ function LayerControls({
             key={place}
             variant="outline"
             size="sm"
+            tone="dark"
             block
             disabled={disabled}
             onClick={() => onReorder(place)}
@@ -518,8 +804,8 @@ function AdjustForm({
   }
 
   return (
-    <Section title="调色">
-      <p className="text-faint mb-2.5 text-[11px] leading-relaxed">
+    <Section title="调色" icon="palette">
+      <p className="mb-2.5 text-[10px] leading-relaxed text-shell-muted">
         拖动即在画布预览，锐化与清晰度需应用后可见。点应用写入新版本，可撤销。
       </p>
       <div className="space-y-2.5">
@@ -543,11 +829,13 @@ function AdjustForm({
           />
         ))}
         <div className="flex gap-2">
-          <Button variant="outline" block disabled={disabled || !touched} onClick={clear}>
+          <Button variant="outline" size="md" tone="dark" block disabled={disabled || !touched} onClick={clear}>
             重置
           </Button>
           <Button
-            variant="solid"
+            variant="signal"
+            size="md"
+            tone="dark"
             block
             disabled={disabled || !touched}
             title={touched ? '写入当前调色，可撤销' : '先拖动滑杆再应用'}
@@ -603,9 +891,9 @@ function SliderField({
         if (value !== origin) onCommit(origin)
       }}
     >
-      <span className="mb-1 flex justify-between text-[11px]">
-        <span className="text-muted">{label}</span>
-        <span className="text-ink tabular-nums">{format(draft ?? value)}</span>
+      <span className="mb-1 flex justify-between text-[10px]">
+        <span className="text-shell-muted">{label}</span>
+        <span className="num text-shell-ink">{format(draft ?? value)}</span>
       </span>
       <input
         type="range"
@@ -641,27 +929,38 @@ function Properties({
     ['修订号', String(revision)],
   ]
   if (current) {
-    rows.push(['格式', current.image_format])
+    rows.push(['格式', current.image_format.toUpperCase()])
     rows.push(['大小', formatBytes(current.size_bytes)])
     rows.push(['透明通道', current.has_alpha ? '有' : '无'])
   }
 
   return (
-    <dl className="space-y-1.5 text-xs">
+    <dl className="space-y-1.5 text-[10px]">
       {rows.map(([label, value]) => (
         <div key={label} className="flex justify-between gap-2">
-          <dt className="text-muted">{label}</dt>
-          <dd className="text-ink tabular-nums">{value}</dd>
+          <dt className="text-shell-muted">{label}</dt>
+          <dd className="num text-shell-ink">{value}</dd>
         </div>
       ))}
     </dl>
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  icon,
+  children,
+}: {
+  title: string
+  icon: IconName
+  children: React.ReactNode
+}) {
   return (
-    <section className="border-line border-b px-4 py-4 last:border-b-0">
-      <h2 className="text-muted mb-2.5 text-xs font-medium">{title}</h2>
+    <section className="border-shell-line border-b px-4 py-4 last:border-b-0">
+      <h2 className="mb-2.5 flex items-center gap-1.5 text-[11px] font-medium text-shell-ink">
+        <Icon name={icon} size={13} className="text-ai" />
+        {title}
+      </h2>
       {children}
     </section>
   )

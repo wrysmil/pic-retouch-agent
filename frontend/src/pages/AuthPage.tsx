@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 
 import BrandMark from '@/components/BrandMark'
+import Icon from '@/components/ui/Icon'
 import { errorMessage, useAuthActions, useCurrentUser } from '@/hooks/useAuth'
 
 type Mode = 'login' | 'register'
@@ -62,12 +63,16 @@ export default function AuthPage() {
 
       <div className="relative w-full max-w-sm">
         <Link to="/" className="text-muted hover:text-ink mb-6 inline-flex items-center gap-2 text-sm">
-          <span aria-hidden>←</span> 返回首页
+          <Icon name="arrow-left" size={15} />
+          返回首页
         </Link>
 
         <div className="border-line bg-paper rounded-panel shadow-panel border p-8">
           <BrandMark size="sm">
-            <span className="text-ink text-sm font-semibold">AI 修图智能体</span>
+            <span className="flex flex-col leading-tight">
+              <span className="text-ink text-sm font-semibold">知图工作室</span>
+              <span className="text-faint text-[9px] tracking-[0.16em]">VISUAL ATELIER</span>
+            </span>
           </BrandMark>
 
           <h1 className="text-ink mt-6 text-2xl font-semibold tracking-tight">{copy.title}</h1>

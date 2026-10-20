@@ -7,10 +7,17 @@ export default function ProgressBar({
   className = 'h-0.5',
 }: {
   value: number
-  tone?: 'ink' | 'brand'
+  tone?: 'ink' | 'brand' | 'signal' | 'ai'
   className?: string
 }) {
   const clamped = Math.max(0, Math.min(100, value))
+  const fill = {
+    ink: 'bg-ink',
+    brand: 'bg-brand-strong',
+    signal: 'bg-signal',
+    ai: 'bg-ai',
+  }[tone]
+  const track = tone === 'signal' || tone === 'ai' ? 'bg-shell-line' : 'bg-line/70'
 
   return (
     <div
@@ -18,10 +25,10 @@ export default function ProgressBar({
       aria-valuenow={Math.round(clamped)}
       aria-valuemin={0}
       aria-valuemax={100}
-      className={`bg-line overflow-hidden ${className}`}
+      className={`${track} overflow-hidden ${className}`}
     >
       <div
-        className={`h-full ${tone === 'brand' ? 'bg-brand-strong' : 'bg-ink'}`}
+        className={`h-full ${fill}`}
         style={{ width: `${Math.max(clamped, 2)}%` }}
       />
     </div>

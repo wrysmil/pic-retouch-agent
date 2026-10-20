@@ -14,6 +14,7 @@ export default function Button({
   active,
   variant = 'ghost',
   size = 'md',
+  tone = 'light',
   block,
   progress = null,
   className,
@@ -34,23 +35,29 @@ export default function Button({
       onClick={onClick}
       disabled={disabled}
       title={title}
+      aria-label={title}
       aria-pressed={active}
       aria-busy={running || undefined}
-      className={[buttonClass({ variant, size, active: active || running, block }), className]
+      className={[
+        buttonClass({ variant, size, tone, active: active || running, block }),
+        className,
+      ]
         .filter(Boolean)
         .join(' ')}
     >
       {running && variant !== 'icon' ? (
         <span className="flex items-center justify-center gap-1.5">
           {children}
-          <span className="tabular-nums opacity-70">{Math.round(filled)}%</span>
+          <span className="num opacity-70">{Math.round(filled)}%</span>
         </span>
       ) : (
         children
       )}
       {running && (
         <span
-          className="bg-brand-strong/60 absolute bottom-0 left-0 h-[2px]"
+          className={`absolute bottom-0 left-0 h-[2px] ${
+            tone === 'dark' ? 'bg-signal/80' : 'bg-brand-strong/60'
+          }`}
           style={{ width: `${Math.max(filled, 4)}%` }}
         />
       )}

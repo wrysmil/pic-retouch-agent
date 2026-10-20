@@ -30,7 +30,7 @@ const SWITCH_FADE_MS = 180
 
 const MIN_LAYER_SCALE = 0.1
 const MAX_LAYER_SCALE = 8
-const SELECTED_STROKE = '#5f98ad'
+const SELECTED_STROKE = '#6fb4a5'
 
 type Drop = { x: number; y: number }
 
@@ -169,7 +169,7 @@ export default function CanvasStage({
   return (
     <div
       ref={containerRef}
-      className={`bg-canvas relative h-full w-full overflow-hidden ${
+      className={`bg-stage relative h-full w-full overflow-hidden ${
         selecting || cropOpen ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'
       }`}
     >
@@ -325,10 +325,10 @@ function CanvasBoard({ width, height }: { width: number; height: number }) {
       <Rect
         width={width}
         height={height}
-        fill="#ffffff"
-        shadowColor="#141a14"
-        shadowBlur={32}
-        shadowOpacity={0.16}
+        fill="#f8f6f1"
+        shadowColor="#0b0e0c"
+        shadowBlur={38}
+        shadowOpacity={0.38}
       />
     </KonvaLayer>
   )
@@ -768,7 +768,7 @@ function TextEditor({
           finish(null)
         }
       }}
-      className="border-brand bg-paper text-ink absolute z-10 resize-none border px-1 py-0.5 outline-none"
+      className="border-ai bg-paper text-ink absolute z-10 resize-none rounded-[3px] border px-1 py-0.5 outline-none"
       style={{
         left: view.x + layer.transform.x * view.scale,
         top: view.y + layer.transform.y * view.scale,
@@ -898,7 +898,7 @@ function LayerScaler({
       anchorCornerRadius={3 * invert}
       anchorStrokeWidth={1.5 * invert}
       borderStrokeWidth={invert}
-      anchorStroke="#427f95"
+      anchorStroke="#d9ff6e"
       borderStroke={SELECTED_STROKE}
       boundBoxFunc={(oldBox, newBox) => {
         const min = MIN_LAYER_SCALE * Math.min(layer.width, layer.height)
@@ -1045,7 +1045,7 @@ function CropLayer({
         y={rect.y}
         width={rect.width}
         height={rect.height}
-        stroke="#5f98ad"
+        stroke="#6fb4a5"
         strokeWidth={2}
         strokeScaleEnabled={false}
         dash={[7 * invert, 5 * invert]}
@@ -1080,8 +1080,8 @@ function CropLayer({
         anchorCornerRadius={3 * invert}
         anchorStrokeWidth={1.5 * invert}
         borderStrokeWidth={invert}
-        anchorStroke="#427f95"
-        borderStroke="#5f98ad"
+        anchorStroke="#d9ff6e"
+        borderStroke="#6fb4a5"
         boundBoxFunc={(oldBox, newBox) =>
           newBox.width < 32 || newBox.height < 32 ? oldBox : newBox
         }

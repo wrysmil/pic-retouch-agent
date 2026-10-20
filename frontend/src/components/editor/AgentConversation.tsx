@@ -30,19 +30,20 @@ export default function AgentConversation({ sessionId }: { sessionId: string }) 
   }, [turns.length, latest?.status])
 
   if (isPending) {
-    return <p className="text-faint min-h-0 flex-1 px-4 py-4 text-xs">加载中…</p>
+    return <p className="min-h-0 flex-1 px-4 py-4 text-[11px] text-shell-muted">加载中…</p>
   }
 
   if (turns.length === 0) {
     return (
-      <p className="text-faint min-h-0 flex-1 px-4 py-4 text-xs leading-relaxed">
-        用一句话说明要怎么改，例如「水平翻转」或「去背景再调亮一点」。多步计划会先列出再执行。
-      </p>
+      <div className="min-h-0 flex-1 px-4 py-4 text-[11px] leading-relaxed text-shell-muted">
+        <p>在画布底部的命令栏输入要怎么改，例如「水平翻转」或「去背景再调亮一点」。</p>
+        <p className="mt-2">发送前会标明作用范围；多步计划先列出步骤，确认后才执行。</p>
+      </div>
     )
   }
 
   return (
-    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-3">
+    <div className="scrollbar-dark min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-3">
       {turns.map((turn) => (
         <TurnBlock key={turn.id} turn={turn} sessionId={sessionId} />
       ))}
@@ -54,14 +55,14 @@ export default function AgentConversation({ sessionId }: { sessionId: string }) 
 function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
   return (
     <div className="space-y-2">
-      <p className="bg-brand-soft text-brand-strong ml-6 rounded-[12px] px-3 py-2 text-xs leading-relaxed">
+      <p className="border-ai/20 bg-ai/10 text-ai ml-6 rounded-control border px-3 py-2 text-[11px] leading-relaxed">
         {turn.goal}
       </p>
 
       {turn.error ? (
-        <p className="text-danger mr-6 text-xs leading-relaxed">{turn.error}</p>
+        <p className="mr-6 text-[11px] leading-relaxed text-[#f19a8f]">{turn.error}</p>
       ) : (
-        <p className="text-ink mr-6 text-xs leading-relaxed">{turn.reply}</p>
+        <p className="mr-6 text-[11px] leading-relaxed text-shell-ink">{turn.reply}</p>
       )}
 
       {turn.steps.map((step, index) => (
@@ -78,7 +79,7 @@ function PlanActions({ turn, sessionId }: { turn: Turn; sessionId: string }) {
   if (turn.status === 'queued') {
     return (
       <div className="mr-6 flex gap-1.5">
-        <Action disabled={actions.busy} onClick={() => actions.confirm(turn.id)}>
+        <Action strong disabled={actions.busy} onClick={() => actions.confirm(turn.id)}>
           执行计划
         </Action>
         <Action disabled={actions.busy} onClick={() => actions.cancel(turn.id)}>
@@ -111,14 +112,22 @@ function PlanActions({ turn, sessionId }: { turn: Turn; sessionId: string }) {
 function Action({
   children,
   disabled,
+  strong,
   onClick,
 }: {
   children: ReactNode
   disabled?: boolean
+  strong?: boolean
   onClick: () => void
 }) {
   return (
-    <Button variant="outline" size="sm" disabled={disabled} onClick={onClick}>
+    <Button
+      variant={strong ? 'signal' : 'outline'}
+      size="sm"
+      tone="dark"
+      disabled={disabled}
+      onClick={onClick}
+    >
       {children}
     </Button>
   )
@@ -150,24 +159,25 @@ function StepCard({
   }, [status, sessionId, queryClient])
 
   return (
-    <div className="border-line mr-6 rounded-[12px] border px-3 py-2">
+    <div className="border-shell-line bg-shell-3/55 mr-6 rounded-control border px-3 py-2">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-ink text-xs font-medium">
-          {index}. {step.label}
+        <span className="text-[11px] font-medium text-shell-ink">
+          <span className="num mr-1 text-ai">{index}</span>
+          {step.label}
         </span>
-        <span className="text-faint shrink-0 text-[10px] tabular-nums">
+        <span className="num shrink-0 text-[10px] text-shell-muted">
           {running ? `${progress}%` : STEP_LABEL[current]}
         </span>
       </div>
 
       {running && (
         <>
-          <ProgressBar value={progress} className="mt-2 h-0.5 rounded-full" />
-          <p className="text-faint mt-1.5 text-[10px]">{stage}</p>
+          <ProgressBar value={progress} tone="signal" className="mt-2 h-0.5 rounded-full" />
+          <p className="mt-1.5 text-[10px] text-shell-muted">{stage}</p>
         </>
       )}
 
-      {error && <p className="text-danger mt-1.5 text-[10px] leading-relaxed">{error}</p>}
+      {error && <p className="mt-1.5 text-[10px] leading-relaxed text-[#f19a8f]">{error}</p>}
     </div>
   )
 }
