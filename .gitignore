@@ -31,6 +31,9 @@ dist-admin/
 # 导出的部署镜像（体积大，只在本机/服务器之间传输）
 release-image/
 
+# 本地构建的部署上传包（镜像 tar 很大，不进 Git）
+deploy-package/
+
 # 文档抓取缓存
 .cache/
 

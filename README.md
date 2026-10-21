@@ -119,6 +119,8 @@ cd frontend && npm run dev:admin
 
 ## 部署
 
+完整的阿里云 ECS 单机部署步骤（安全组端口、swap、先 IP 后域名、首次配置模型）见 [部署文档](docs/部署文档.md)。
+
 ```bash
 cp .env.example .env
 docker compose --profile deploy up -d --build

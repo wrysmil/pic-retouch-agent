@@ -35,7 +35,7 @@ class WorkerSettings:
     on_startup = on_startup
     on_shutdown = on_shutdown
     # 单个 worker 进程最多同时并发执行的任务数
-    max_jobs = 4
+    max_jobs = 2
     # 单个任务最长执行时间（秒），超时会被终止
     job_timeout = 300
     # 任务执行结果在 Redis 中的保留时长（秒），过期自动清理
