@@ -21,10 +21,17 @@ class Settings(BaseSettings):
     # Redis 连接串，用于缓存/队列等
     redis_url: str = "redis://localhost:7312"
 
-    # S3/MinIO 对象存储服务地址
+    # S3 兼容对象存储（MinIO / 七牛 Kodo 等）服务地址
     s3_endpoint: str = "http://localhost:7313"
-    # 浏览器打开签名 URL 的地址；空则与 s3_endpoint 相同
+    # 浏览器访问地址；空则与 s3_endpoint 相同
     s3_public_endpoint: str = ""
+    # 公开桶：直接拼固定外链，不再生成会过期的签名 URL
+    s3_public_read: bool = False
+    # 签名区域与寻址方式：MinIO 用 us-east-1 + path；七牛按空间区域填写
+    s3_region: str = "us-east-1"
+    s3_addressing_style: str = "path"
+    # MinIO 可在启动时自动建桶；云厂商对象存储通常没有建桶权限
+    s3_create_bucket: bool = True
     # S3 访问密钥 ID
     s3_access_key: str = "retouch"
     # S3 访问密钥 Secret

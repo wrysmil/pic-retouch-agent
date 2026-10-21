@@ -1,5 +1,6 @@
 import asyncio
 from functools import lru_cache
+from urllib.parse import quote
 
 import boto3
 from botocore.client import Config
@@ -17,14 +18,21 @@ def _client(endpoint: str | None = None):
         endpoint_url=endpoint or settings.s3_endpoint,
         aws_access_key_id=settings.s3_access_key,
         aws_secret_access_key=settings.s3_secret_key,
-        config=Config(signature_version="s3v4"),
-        region_name="us-east-1",
+        # 七牛等 S3 兼容服务要求签名区域与桶所在区域一致
+        region_name=settings.s3_region,
+        config=Config(
+            signature_version="s3v4",
+            s3={"addressing_style": settings.s3_addressing_style},
+        ),
     )
 
 
 def ensure_bucket() -> None:
     """幂等地确保桶存在；MinIO 未就绪时抛 ClientError，兼作健康探针。"""
-    bucket = get_settings().s3_bucket
+    settings = get_settings()
+    if not settings.s3_create_bucket:
+        return
+    bucket = settings.s3_bucket
     try:
         # 桶已存在则 head_bucket 成功，什么都不用做
         _client().head_bucket(Bucket=bucket)
@@ -58,8 +66,13 @@ async def delete(key: str) -> None:
 
 
 def signed_url(key: str) -> str:
-    """生成短时签名 URL。纯本地计算，不产生网络请求。"""
+    """浏览器可访问的对象地址。
+
+    公开桶返回固定外链（URL 不变，浏览器可长期缓存）；私有桶退化为短时签名 URL。
+    """
     settings = get_settings()
+    if settings.s3_public_read and settings.s3_public_endpoint:
+        return f"{settings.s3_public_endpoint.rstrip('/')}/{quote(key, safe='/')}"
     # 用密钥对"下载该对象"的请求签名，生成一个有效期 s3_url_ttl 秒的临时直链
     return _client(settings.s3_public_endpoint or None).generate_presigned_url(
         "get_object",
