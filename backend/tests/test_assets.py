@@ -48,6 +48,29 @@ async def test_upload_rejects_corrupted_file(signed_in: httpx.AsyncClient):
     assert response.status_code == 422
 
 
+async def test_upload_rejects_truncated_jpeg(signed_in: httpx.AsyncClient):
+    """JPEG 抽样解码后仍要暴露截断，不能为了省 CPU 放过坏文件。"""
+    jpeg = make_image((640, 480), fmt="JPEG")
+
+    response = await signed_in.post(
+        "/api/assets", files=upload_payload(jpeg[: len(jpeg) // 2], "a.jpg", "image/jpeg")
+    )
+
+    assert response.status_code == 422
+
+
+async def test_upload_reports_original_dimensions_after_draft(signed_in: httpx.AsyncClient):
+    """抽样解码会改写 image.size，记录的必须是原图尺寸。"""
+    jpeg = make_image((4000, 3000), fmt="JPEG")
+
+    response = await signed_in.post(
+        "/api/assets", files=upload_payload(jpeg, "a.jpg", "image/jpeg")
+    )
+
+    assert response.status_code == 201
+    assert (response.json()["width"], response.json()["height"]) == (4000, 3000)
+
+
 async def test_upload_rejects_unsupported_format(signed_in: httpx.AsyncClient):
     gif = make_image(fmt="GIF")
 

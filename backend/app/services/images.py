@@ -5,7 +5,9 @@
 使用 PIL 库解码图片，验证格式、大小和完整性。
 """
 
+import asyncio
 import io
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from PIL import Image, UnidentifiedImageError
@@ -21,6 +23,10 @@ MIN_SIDE = 32
 ALLOWED_FORMATS = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}
 # 格式对应的文件扩展名
 EXTENSIONS = {"JPEG": "jpg", "PNG": "png", "WEBP": "webp"}
+
+# 解码大图是 CPU 与内存密集型操作：2 核 4G 上并发解码几张 5000 万像素的图
+# 就能吃光余量，因此用固定线程池把并发压在 2。
+_DECODE_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="image-probe")
 
 
 class ImageRejected(Exception):
@@ -76,9 +82,13 @@ def probe(data: bytes) -> ImageMeta:
     try:
         with Image.open(io.BytesIO(data)) as image:
             image_format = image.format or ""
+            # 元信息必须在 draft 之前读取，抽样解码会改写 image.size
             width, height = image.size
             has_alpha = image.mode in {"RGBA", "LA", "PA"} or "transparency" in image.info
-            # 触发完整解码以暴露截断或损坏的数据
+            # JPEG 支持按 1/2、1/4、1/8 抽样解码：截断仍会在 load 时暴露，
+            # 但不必为校验解出整张位图，省下大量 CPU 与内存
+            if image_format == "JPEG":
+                image.draft(None, (1024, 1024))
             image.load()
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
         raise ImageRejected("文件已损坏或不是受支持的图片") from exc
@@ -99,3 +109,8 @@ def probe(data: bytes) -> ImageMeta:
         size_bytes=len(data),
         has_alpha=has_alpha,
     )
+
+
+async def probe_async(data: bytes) -> ImageMeta:
+    """在线程池里校验图片，避免同步解码阻塞事件循环。"""
+    return await asyncio.get_running_loop().run_in_executor(_DECODE_POOL, probe, data)

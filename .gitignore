@@ -28,6 +28,9 @@ dist-admin/
 .data/
 *.log
 
+# 导出的部署镜像（体积大，只在本机/服务器之间传输）
+release-image/
+
 # 文档抓取缓存
 .cache/
 

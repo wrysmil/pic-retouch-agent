@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import storage
 from app.models import Asset, EditSession, SessionAsset
 from app.models.asset import AssetKind, AssetSource
-from app.services.images import ImageMeta, probe
+from app.services.images import ImageMeta, probe_async
 
 # 遮罩、抠图层是会话内部产物，创作页历史素材不单独摊开
 _WORKING = {AssetKind.MASK, AssetKind.SUBJECT, AssetKind.BACKGROUND}
@@ -45,7 +45,7 @@ async def create_from_bytes(
     - **meta**: 图片元信息（可选，不传则自动探测）
     - **返回**: 创建的 Asset 记录
     """
-    meta = meta or probe(data)
+    meta = meta or await probe_async(data)
     asset_id = uuid.uuid4()
     key = _storage_key(user_id, asset_id, meta.extension)
 

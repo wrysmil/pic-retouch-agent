@@ -54,7 +54,9 @@ export default function ImageDropzone({ onFile, disabled, hint, multiple }: Prop
         <span className="text-ink text-sm font-medium">
           {disabled ? '上传中…' : multiple ? '拖入多张图片，或点击选择' : '拖入图片，或点击选择'}
         </span>
-        <span className="text-faint text-xs">{hint ?? 'JPG / PNG / WebP，单张不超过 20 MB'}</span>
+        <span className="text-faint text-xs">
+          {hint ?? 'JPG / PNG / WebP，单张不超过 20 MB，大图会自动压缩'}
+        </span>
       </button>
 
       <input

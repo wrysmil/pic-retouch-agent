@@ -15,9 +15,23 @@ from app.models.asset import AssetKind, AssetSource
 from app.schemas.asset import AssetOut, LibraryGroupOut
 from app.services import assets as asset_service
 from app.services.assets import ORPHAN_TITLE
-from app.services.images import MAX_FILE_BYTES, ImageRejected, probe
+from app.services.images import MAX_FILE_BYTES, ImageRejected, probe_async
 
 router = APIRouter(prefix="/assets", tags=["assets"])
+
+_READ_CHUNK = 1024 * 1024
+
+
+async def _read_limited(file: UploadFile) -> bytes:
+    """分块读取上传内容，超限立即中断，避免超大请求整体驻留内存。"""
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(_READ_CHUNK):
+        total += len(chunk)
+        if total > MAX_FILE_BYTES:
+            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "文件超过 20 MB 上限")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @router.post(
@@ -41,12 +55,10 @@ async def upload(
     - 413: 文件超过 20MB 上限
     - 422: 不支持的图片格式或文件损坏
     """
-    data = await file.read()
-    if len(data) > MAX_FILE_BYTES:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "文件超过 20 MB 上限")
+    data = await _read_limited(file)
 
     try:
-        meta = probe(data)
+        meta = await probe_async(data)
     except ImageRejected as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { ACCEPTED_TYPES, MAX_UPLOAD_BYTES, assetsApi } from '@/api/assets'
+import { prepareUpload } from '@/lib/imageUpload'
 
 const ASSETS_KEY = ['assets']
 
@@ -25,7 +26,7 @@ export function useAssetLibrary(limit?: number) {
 export function useUploadAsset() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (file: File) => assetsApi.upload(file),
+    mutationFn: async (file: File) => assetsApi.upload(await prepareUpload(file)),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ASSETS_KEY }),
   })
 }
