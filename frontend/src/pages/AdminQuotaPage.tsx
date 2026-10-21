@@ -236,7 +236,7 @@ export default function AdminQuotaPage() {
                   />
                 </Field>
                 <Button
-                  variant="outline"
+                  variant="default"
                   size="sm"
                   disabled={adjust.isPending}
                   onClick={submitAdjust}
