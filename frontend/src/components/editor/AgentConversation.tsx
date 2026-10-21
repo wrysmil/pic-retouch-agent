@@ -3,10 +3,12 @@ import { useQueryClient } from '@tanstack/react-query'
 
 import type { PlanStep, StepStatus, Turn } from '@/api/agent'
 import { isTerminal } from '@/api/runs'
+import AiBadge from '@/components/ui/AiBadge'
 import Button from '@/components/ui/Button'
 import ProgressBar from '@/components/ui/ProgressBar'
 import { usePlanActions, useTurns } from '@/hooks/useAgent'
 import { useRun } from '@/hooks/useRun'
+import { isAiGeneration } from '@/lib/tools'
 
 const STEP_LABEL: Record<StepStatus, string> = {
   pending: '等待中',
@@ -152,8 +154,9 @@ function StepCard({
   return (
     <div className="border-line mr-6 rounded-[12px] border px-3 py-2">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-ink text-xs font-medium">
+        <span className="text-ink inline-flex flex-wrap items-center gap-1.5 text-xs font-medium">
           {index}. {step.label}
+          {isAiGeneration(step.tool) && <AiBadge />}
         </span>
         <span className="text-faint shrink-0 text-[10px] tabular-nums">
           {running ? `${progress}%` : STEP_LABEL[current]}

@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import AssetLibrary from '@/components/AssetLibrary'
+import AiBadge from '@/components/ui/AiBadge'
 import ProgressBar from '@/components/ui/ProgressBar'
 import type { Asset } from '@/api/assets'
 import type { SessionDetail } from '@/api/sessions'
@@ -311,9 +312,10 @@ function KindCard({
         type="button"
         disabled={disabled}
         onClick={onGenerate}
-        className="border-line text-ink hover:bg-soft rounded-control mt-3 px-3 py-1.5 text-xs font-medium disabled:opacity-40"
+        className="border-line text-ink hover:bg-soft rounded-control mt-3 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium disabled:opacity-40"
       >
         {running ? '生成中…' : '生成'}
+        <AiBadge />
       </button>
     </div>
   )

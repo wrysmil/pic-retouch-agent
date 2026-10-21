@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { Asset } from '@/api/assets'
 import { isTerminal } from '@/api/runs'
 import ImageDropzone from '@/components/ImageDropzone'
+import AiBadge from '@/components/ui/AiBadge'
 import ProgressBar from '@/components/ui/ProgressBar'
 import { useAssetLibrary, useUploadAsset } from '@/hooks/useAssets'
 import { errorMessage } from '@/hooks/useAuth'
@@ -23,6 +24,7 @@ import {
   operationsOf,
 } from '@/lib/batch'
 import { formatDateTime } from '@/lib/format'
+import { isAiGeneration } from '@/lib/tools'
 import { toast } from '@/stores/toasts'
 
 const MAX_IMAGES = 20
@@ -129,9 +131,10 @@ function Compose() {
           type="button"
           disabled={Boolean(blocked) || create.isPending}
           onClick={start}
-          className="bg-ink hover:bg-dark rounded-control px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+          className="bg-ink hover:bg-dark rounded-control inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
         >
           {create.isPending ? '提交中…' : '开始处理'}
+          {draft.selected.some(isAiGeneration) && <AiBadge />}
         </button>
         {blocked && <p className="text-faint text-xs">{blocked}</p>}
         {create.isError && <p className="text-danger text-xs">{errorMessage(create.error)}</p>}
@@ -307,7 +310,10 @@ function Pipeline({
                   className="mt-0.5"
                 />
                 <span>
-                  <span className="text-ink block text-sm font-medium">{step.label}</span>
+                  <span className="text-ink flex items-center gap-1.5 text-sm font-medium">
+                    {step.label}
+                    {isAiGeneration(step.id) && <AiBadge />}
+                  </span>
                   <span className="text-faint block text-xs">{step.hint}</span>
                 </span>
               </label>

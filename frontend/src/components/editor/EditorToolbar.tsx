@@ -39,19 +39,6 @@ export default function EditorToolbar({
   const running = (tool: string, match?: (params: Record<string, unknown>) => boolean) =>
     tools.isRunning(tool, match) ? tools.pendingProgress : null
 
-  const confirmCrop = () => {
-    if (!ui.cropRect) return
-    tools.invoke('crop_canvas', {
-      rect: {
-        x: ui.cropRect.x / session.document.width,
-        y: ui.cropRect.y / session.document.height,
-        width: ui.cropRect.width / session.document.width,
-        height: ui.cropRect.height / session.document.height,
-      },
-    })
-    ui.closeCrop()
-  }
-
   return (
     <header className="border-line bg-paper scrollbar-slim flex h-14 shrink-0 items-center gap-2 overflow-x-auto border-b px-3">
       <TitleField value={session.title} onCommit={onRename} />
@@ -78,6 +65,7 @@ export default function EditorToolbar({
               笔刷
             </Button>
             <Button
+              ai
               disabled={tools.busy || picking.busy || !picking.selection}
               progress={running('erase_region')}
               title={picking.selection ? '消除选中区域' : '先点选或涂抹'}
@@ -92,6 +80,7 @@ export default function EditorToolbar({
               消除
             </Button>
             <Button
+              ai
               disabled={!picking.selection}
               active={ui.panel === 'replace'}
               title={picking.selection ? '按描述替换选区' : '先点选或涂抹'}
@@ -100,6 +89,7 @@ export default function EditorToolbar({
               替换
             </Button>
             <Button
+              ai
               disabled={tools.busy || picking.busy || !picking.selection}
               progress={running('promote_object_to_layer')}
               title={picking.selection ? '把选区提升为独立图层，可撤销' : '先点选或涂抹'}
@@ -135,12 +125,6 @@ export default function EditorToolbar({
                 {item.label}
               </Button>
             ))}
-            <Button title="按当前框裁剪画布，可撤销" onClick={confirmCrop}>
-              确定
-            </Button>
-            <Button title="退出裁剪 Esc" onClick={ui.closeCrop}>
-              取消
-            </Button>
           </>
         ) : (
           <>
@@ -187,6 +171,7 @@ export default function EditorToolbar({
               去背景
             </Button>
             <Button
+              ai
               disabled={tools.busy}
               active={ui.panel === 'background'}
               title="按描述替换背景"
@@ -195,6 +180,7 @@ export default function EditorToolbar({
               换背景
             </Button>
             <Button
+              ai
               disabled={tools.busy}
               active={ui.panel === 'expand'}
               title="扩展画布到新比例"
@@ -203,6 +189,7 @@ export default function EditorToolbar({
               扩图
             </Button>
             <Button
+              ai
               disabled={tools.busy}
               progress={running('upscale_image')}
               title={
@@ -222,6 +209,7 @@ export default function EditorToolbar({
               调色
             </Button>
             <Button
+              ai
               disabled={tools.busy}
               progress={running('split_layers')}
               title="拆成背景和主体，文字需在图层面板勾选，可撤销"

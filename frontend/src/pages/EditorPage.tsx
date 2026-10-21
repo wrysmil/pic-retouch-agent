@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 
 import CanvasHint from '@/components/editor/CanvasHint'
 import CanvasStage from '@/components/editor/CanvasStage'
+import CropActions from '@/components/editor/CropActions'
 import EditorToolbar from '@/components/editor/EditorToolbar'
 import ImageWall from '@/components/editor/ImageWall'
 import LayerPanel from '@/components/editor/LayerPanel'
@@ -149,32 +150,35 @@ function Workspace({ sessionId }: { sessionId: string }) {
         )}
 
         <div className="relative flex min-h-0 min-w-0 flex-1">
-          <div className="relative min-h-0 min-w-0 flex-1">
-            <CanvasStage
-              document={session.document}
-              previous={session.previous_document}
-              urls={urls}
-              selection={picking.selection}
-              onPoint={picking.busy ? undefined : picking.addPoint}
-              onStroke={picking.busy ? undefined : picking.addStroke}
-              onMove={(layer_id, x, y) => tools.invoke('move_layer', { layer_id, x, y })}
-              onScale={(layer_id, scale, x, y) =>
-                tools.invoke('scale_layer', { layer_id, scale_x: scale, scale_y: scale, x, y })
-              }
-              onEditText={(layer_id, text) => tools.invoke('set_layer_text', { layer_id, text })}
-            />
-            <CanvasHint
-              {...canvasHint({
-                busy: tools.busy,
-                pending: tools.pending,
-                stage: tools.pendingStage,
-                progress: tools.pendingProgress,
-                cropOpen,
-                compareOpen,
-                selectMode,
-                picking: picking.busy,
-              })}
-            />
+          <div className="@container relative flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="relative min-h-0 flex-1">
+              <CanvasStage
+                document={session.document}
+                previous={session.previous_document}
+                urls={urls}
+                selection={picking.selection}
+                onPoint={picking.busy ? undefined : picking.addPoint}
+                onStroke={picking.busy ? undefined : picking.addStroke}
+                onMove={(layer_id, x, y) => tools.invoke('move_layer', { layer_id, x, y })}
+                onScale={(layer_id, scale, x, y) =>
+                  tools.invoke('scale_layer', { layer_id, scale_x: scale, scale_y: scale, x, y })
+                }
+                onEditText={(layer_id, text) => tools.invoke('set_layer_text', { layer_id, text })}
+              />
+              <CanvasHint
+                {...canvasHint({
+                  busy: tools.busy,
+                  pending: tools.pending,
+                  stage: tools.pendingStage,
+                  progress: tools.pendingProgress,
+                  cropOpen,
+                  compareOpen,
+                  selectMode,
+                  picking: picking.busy,
+                })}
+              />
+            </div>
+            {cropOpen && <CropActions document={session.document} tools={tools} />}
           </div>
           {heldPanel && (
             <div
@@ -222,7 +226,7 @@ function canvasHint({
   if (busy) {
     return { mode: 'busy', text: pending ? `${stage || '处理中'} · ${progress}%` : '处理中' }
   }
-  if (cropOpen) return { mode: 'crop', text: '拖动裁剪框，点确定应用 · Esc 取消' }
+  if (cropOpen) return { mode: 'crop', text: '拖动裁剪框 · 在下方应用或取消' }
   if (compareOpen) return { mode: 'compare', text: '拖动画布上的圆点对比上一版 · Esc 退出' }
   if (selectMode === 'point') {
     return picking

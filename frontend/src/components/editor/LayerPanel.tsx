@@ -100,6 +100,7 @@ export default function LayerPanel({
         </label>
         <div className="mb-2.5 flex gap-1">
           <Button
+            ai
             variant="outline"
             size="sm"
             block
@@ -111,6 +112,7 @@ export default function LayerPanel({
             拆层
           </Button>
           <Button
+            ai
             variant="outline"
             size="sm"
             block

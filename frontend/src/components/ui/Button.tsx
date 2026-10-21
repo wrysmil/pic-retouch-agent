@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 
+import AiBadge from '@/components/ui/AiBadge'
 import { buttonClass, type ButtonLook } from '@/components/ui/buttonStyles'
 
 /**
@@ -16,6 +17,7 @@ export default function Button({
   size = 'md',
   block,
   progress = null,
+  ai = false,
   className,
 }: ButtonLook & {
   children: ReactNode
@@ -23,6 +25,7 @@ export default function Button({
   title?: string
   disabled?: boolean
   progress?: number | null
+  ai?: boolean
   className?: string
 }) {
   const running = progress !== null
@@ -40,17 +43,18 @@ export default function Button({
         .filter(Boolean)
         .join(' ')}
     >
-      {running && variant !== 'icon' ? (
-        <span className="flex items-center justify-center gap-1.5">
+      {ai || (running && variant !== 'icon') ? (
+        <span className="inline-flex items-center justify-center gap-1.5">
           {children}
-          <span className="tabular-nums opacity-70">{Math.round(filled)}%</span>
+          {ai && <AiBadge />}
+          {running && <span className="tabular-nums opacity-70">{Math.round(filled)}%</span>}
         </span>
       ) : (
         children
       )}
       {running && (
         <span
-          className="bg-brand-strong/60 absolute bottom-0 left-0 h-[2px]"
+          className={`${ai ? 'bg-ai-ink/60' : 'bg-brand-strong/60'} absolute bottom-0 left-0 h-[2px]`}
           style={{ width: `${Math.max(filled, 4)}%` }}
         />
       )}

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import { RATIO_LABELS, type GenerateInput, type Ratio } from '@/api/runs'
+import AiBadge from '@/components/ui/AiBadge'
 
 const RATIOS = Object.keys(RATIO_LABELS) as Ratio[]
 const COUNTS = [1, 2, 4, 6]
@@ -76,9 +77,10 @@ export default function GenerateForm({
         <button
           type="submit"
           disabled={!canSubmit}
-          className="bg-ink hover:bg-dark rounded-control ml-auto px-4 py-2 text-sm font-medium text-white transition-all duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100"
+          className="bg-ink hover:bg-dark rounded-control ml-auto inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white transition-all duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100"
         >
           {pending ? '提交中…' : '生成'}
+          <AiBadge />
         </button>
       </div>
       <p className="text-faint px-3 pb-2 text-[11px]">

@@ -59,6 +59,7 @@ export function BackgroundForm({
         ))}
       </div>
       <Button
+        ai
         variant="solid"
         block
         className="mt-3"
@@ -109,6 +110,7 @@ export function ExpandForm({
         ))}
       </div>
       <Button
+        ai
         variant="solid"
         block
         className="mt-3"
@@ -146,6 +148,7 @@ export function ReplaceForm({
         className={FIELD}
       />
       <Button
+        ai
         variant="solid"
         block
         className="mt-3"
