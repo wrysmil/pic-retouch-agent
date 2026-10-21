@@ -16,10 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import SessionDep
 from app.deps import CurrentUser
 from app.models.tool_run import ToolRun
+from app.routers.quota import quota_http_error
 from app.schemas.asset import AssetOut
 from app.schemas.run import GenerateIn, RunOut
 from app.services import assets as asset_service
-from app.services import runs, tools
+from app.services import quota, runs, tools
 from app.services.runs import RunNotFound
 from app.tools import GENERATE_IMAGE
 
@@ -75,7 +76,10 @@ async def create_generation(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "参考图不存在")
 
     params = payload.model_dump(mode="json")
-    run = await tools.submit(session, user.id, GENERATE_IMAGE.name, params)
+    try:
+        run = await tools.submit(session, user.id, GENERATE_IMAGE.name, params)
+    except quota.QuotaExhausted as exc:
+        raise quota_http_error(exc) from exc
     return RunOut.of(run)
 
 

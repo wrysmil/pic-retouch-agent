@@ -14,6 +14,7 @@ import {
   useCreateBatch,
   useExportBatch,
 } from '@/hooks/useBatch'
+import { formatResetAt, useEntitlements, useEstimate } from '@/hooks/useQuota'
 import {
   BATCH_STEPS,
   EMPTY_DRAFT,
@@ -43,6 +44,17 @@ function Compose() {
   const [assets, setAssets] = useState<Asset[]>([])
   const [draft, setDraft] = useState<BatchDraft>(EMPTY_DRAFT)
   const blocked = draftReady(draft, assets.length)
+  const entitlements = useEntitlements()
+  const estimate = useEstimate(
+    'batch_process',
+    {
+      asset_ids: assets.map((asset) => asset.id),
+      operations: operationsOf(draft),
+    },
+    assets.length > 0 && draft.selected.length > 0,
+  )
+  const units = estimate.data?.required ?? 0
+  const short = Boolean(estimate.data && !estimate.data.affordable)
 
   const add = (asset: Asset) =>
     setAssets((current) =>
@@ -52,7 +64,7 @@ function Compose() {
     )
 
   const start = () => {
-    if (blocked) return
+    if (blocked || short) return
     create.mutate(
       {
         asset_ids: assets.map((asset) => asset.id),
@@ -129,14 +141,20 @@ function Compose() {
       <div className="mt-8 flex items-center gap-3">
         <button
           type="button"
-          disabled={Boolean(blocked) || create.isPending}
+          disabled={Boolean(blocked) || short || create.isPending}
           onClick={start}
           className="bg-ink hover:bg-dark rounded-control inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
         >
-          {create.isPending ? '提交中…' : '开始处理'}
+          {short ? '次数不足' : create.isPending ? '提交中…' : '开始处理'}
           {draft.selected.some(isAiGeneration) && <AiBadge />}
         </button>
         {blocked && <p className="text-faint text-xs">{blocked}</p>}
+        {!blocked && (
+          <p className={short ? 'text-danger text-xs' : 'text-muted text-xs'}>
+            预计 {units} 次 · 可用 {entitlements.data?.available ?? '—'} 次
+            {short && `，${formatResetAt(entitlements.data)}后恢复`}
+          </p>
+        )}
         {create.isError && <p className="text-danger text-xs">{errorMessage(create.error)}</p>}
       </div>
 

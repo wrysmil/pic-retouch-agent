@@ -24,5 +24,10 @@ async def close_queue() -> None:
 
 async def enqueue(task: str, run_id: uuid.UUID) -> None:
     """以 run id 作为任务 ID，重复投递同一 run 不会产生第二次执行。"""
+    await enqueue_job(task, str(run_id), run_id)
+
+
+async def enqueue_job(task: str, job_id: str, *args) -> None:
+    """显式指定 job id。恢复扫描用它避开已经卡住的旧 job，业务侧仍靠租约/状态去重。"""
     pool = await queue()
-    await pool.enqueue_job(task, run_id, _job_id=str(run_id))
+    await pool.enqueue_job(task, *args, _job_id=job_id)

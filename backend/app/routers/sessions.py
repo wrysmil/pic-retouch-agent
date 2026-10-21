@@ -29,10 +29,18 @@ from app.schemas.session import (
     ToolInvokeIn,
     ToolInvokeOut,
 )
+from app.config import get_settings
+from app.routers.quota import quota_http_error
 from app.services import agent as agent_service
 from app.services import assets as asset_service
-from app.services import exports, selections, sessions, tools
-from app.services.agent import CannotCancel, CannotConfirm, CannotRetry, TurnNotFound
+from app.services import exports, quota, selections, sessions, tools
+from app.services.agent import (
+    CannotCancel,
+    CannotConfirm,
+    CannotRetry,
+    IdempotencyConflict,
+    TurnNotFound,
+)
 from app.services.exports import UnknownExportAsset
 from app.services.selections import EmptySelection, StaleSelection
 from app.services.sessions import CannotRedo, CannotUndo, SessionNotFound
@@ -323,6 +331,8 @@ async def invoke_tool(
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except InvalidParams as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    except quota.QuotaExhausted as exc:
+        raise quota_http_error(exc) from exc
     record = await sessions.get_for_user(session, record.id, user.id)
     return ToolInvokeOut(run=RunOut.of(run), session=await _detail(session, record))
 
@@ -450,29 +460,56 @@ async def list_messages(
     "/{session_id}/messages",
     status_code=status.HTTP_201_CREATED,
     summary="发送修图指令",
-    description="用自然语言描述修图意图，由 AI 规划为工具调用并异步执行。",
+    description="先创建轮次并立即返回；默认由后台规划，规划过程通过轮次 SSE 推送。",
 )
 async def send_message(
     session_id: uuid.UUID,
     payload: MessageIn,
     user: CurrentUser,
     session: SessionDep,
+    response: Response,
 ) -> TurnOut:
     """
     发送一条自然语言修图指令。
 
-    **请求参数 (MessageIn)**:
-    - **text**: 修图指令文本（必填，1-1000 字符）
+    - **text**: 修图指令文本
+    - **request_id**: 客户端幂等键；重复点击复用同一轮次
 
-    **返回**: 本轮对话（TurnOut），含规划结果与已投递的工具步骤
-
-    - 指令会被规划模型解析为至多 8 步的工具计划，服务端校验后落库
-    - 单步计划直接开跑；多步计划先停在 status=queued，等用户调 confirm 确认
-    - 指令与修图无关时返回一句中文说明，不调用任何工具
-    - 规划模型未配置时明确失败（status=failed），不会伪造成功结果
+    异步规划开启时返回 202 与 planning 阶段的轮次，随后由后台写入草稿与正式计划；
+    关闭时退回旧的同步规划（201）。
     """
     record = await _load(session, user, session_id)
-    return TurnOut.of(await agent_service.respond(session, record, payload.text))
+    try:
+        if get_settings().agent_async_planning:
+            turn = await agent_service.create_turn(
+                session, record, payload.text, payload.request_id
+            )
+            response.status_code = status.HTTP_202_ACCEPTED
+            return TurnOut.of(turn)
+        return TurnOut.of(await agent_service.respond(session, record, payload.text))
+    except IdempotencyConflict as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "同一请求号已用于其他指令，请刷新后重试"
+        ) from exc
+
+
+@router.get(
+    "/{session_id}/messages/{turn_id}",
+    summary="获取单个轮次快照",
+    description="刷新或断线后恢复本轮规划/执行状态；不包含其他会话的数据。",
+)
+async def get_message(
+    session_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+) -> TurnOut:
+    record = await _load(session, user, session_id)
+    try:
+        turn = await agent_service.turn_of(session, record, turn_id)
+    except TurnNotFound as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "对话不存在") from exc
+    return TurnOut.of(turn)
 
 
 @router.post(
@@ -497,6 +534,8 @@ async def confirm_plan(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "对话不存在") from exc
     except CannotConfirm as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, "当前没有待确认的步骤") from exc
+    except quota.QuotaExhausted as exc:
+        raise quota_http_error(exc) from exc
 
 
 @router.post(

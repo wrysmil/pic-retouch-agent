@@ -18,6 +18,7 @@ from app.routers import (
     batches,
     events,
     health,
+    quota,
     runs,
     sessions,
 )
@@ -54,6 +55,7 @@ api.include_router(auth.router)
 api.include_router(assets.router)
 api.include_router(health.router)
 api.include_router(runs.router)
+api.include_router(quota.router)
 api.include_router(sessions.router)
 api.include_router(batches.router)
 api.include_router(admin_users.router)

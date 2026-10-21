@@ -11,6 +11,7 @@ from app.services import assets, runs
 from app.services.runtime_provider import image_client_for_run
 from app.tools.base import ToolSpec
 from app.tools.context import document_of, flatten_session, require_session
+from app.tools.quota_units import count_of, one
 from app.tools.target import background_target, layer_image, write_layer_image
 
 
@@ -134,6 +135,7 @@ REPLACE_BACKGROUND = ToolSpec(
     queued=True,
     session_required=True,
     agent_hidden=("negative_prompt",),
+    quota_units=count_of,
 )
 
 EXPAND_CANVAS = ToolSpec(
@@ -144,6 +146,7 @@ EXPAND_CANVAS = ToolSpec(
     handler=expand_canvas_exec,
     queued=True,
     session_required=True,
+    quota_units=one,
 )
 
 UPSCALE_IMAGE = ToolSpec(
@@ -154,4 +157,5 @@ UPSCALE_IMAGE = ToolSpec(
     handler=upscale_image_exec,
     queued=True,
     session_required=True,
+    quota_units=one,
 )

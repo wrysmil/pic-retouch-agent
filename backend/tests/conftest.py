@@ -222,6 +222,27 @@ async def test_runtime_config():
 
 
 @pytest.fixture(scope="session", autouse=True)
+def sync_agent_planning():
+    """现有用例依赖 POST 返回时计划已就绪；异步规划由专门用例显式打开。"""
+    settings = get_settings()
+    original, settings.agent_async_planning = settings.agent_async_planning, False
+    yield
+    settings.agent_async_planning = original
+
+
+@pytest.fixture(scope="session", autouse=True)
+def shadow_quota():
+    """现有用例会连续生成多张图；默认关闭强制拦截，仍保留预占与流水。
+
+    额度相关用例在自身作用域内把 quota_enforce 改回 True。
+    """
+    settings = get_settings()
+    original, settings.quota_enforce = settings.quota_enforce, False
+    yield
+    settings.quota_enforce = original
+
+
+@pytest.fixture(scope="session", autouse=True)
 def corner_matting():
     settings = get_settings()
     original, settings.matting_provider = settings.matting_provider, "corner"

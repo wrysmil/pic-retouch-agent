@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import AdminLayout from '@/layouts/AdminLayout'
 import AdminModelsPage from '@/pages/AdminModelsPage'
 import AdminOverviewPage from '@/pages/AdminOverviewPage'
+import AdminQuotaPage from '@/pages/AdminQuotaPage'
 import AdminUsersPage from '@/pages/AdminUsersPage'
 import AdminLoginPage from './AdminLoginPage'
 import RequireAdmin from './RequireAdmin'
@@ -18,6 +19,7 @@ export default function AdminApp() {
           <Route element={<AdminLayout />}>
             <Route path="/" element={<AdminOverviewPage />} />
             <Route path="/users" element={<AdminUsersPage />} />
+            <Route path="/quota" element={<AdminQuotaPage />} />
             <Route path="/models" element={<AdminModelsPage />} />
           </Route>
         </Route>

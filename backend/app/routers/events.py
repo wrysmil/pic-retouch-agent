@@ -9,15 +9,17 @@ import json
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, Header, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 
 from app import events
 from app.db import SessionDep
 from app.deps import CurrentUser
+from app.models import AgentRun
 from app.models.tool_run import RunStatus
-from app.services import runs
+from app.services import runs, sessions, turn_events
 from app.services.runs import RunNotFound
+from app.services.sessions import SessionNotFound
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -30,6 +32,22 @@ _MAX_STREAM_SECONDS = 600.0
 def _frame(payload: dict) -> str:
     """将字典 payload 序列化为 SSE data 帧。"""
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _event_frame(payload: dict) -> str:
+    """轮次事件带 id，浏览器重连时可用 Last-Event-ID 继续。"""
+    return f"id: {payload.get('seq', 0)}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _envelope(turn: AgentRun, type_: str, payload: dict) -> dict:
+    return {
+        "event_id": None,
+        "seq": turn.last_event_seq,
+        "turn_id": str(turn.id),
+        "planning_attempt": turn.planning_attempt,
+        "type": type_,
+        "payload": payload,
+    }
 
 
 @router.get(
@@ -117,6 +135,77 @@ async def stream_run(
                 # 检查是否是终态（completed/failed），是则断开
                 # 不需要再监听了，任务已经结束
                 if RunStatus(payload["status"]).is_terminal:
+                    return
+
+    return StreamingResponse(stream(), media_type="text/event-stream", headers=_HEADERS)
+
+
+@router.get(
+    "/agent-runs/{turn_id}",
+    summary="订阅轮次规划与执行事件",
+    description="先发轮次快照，再推送规划草稿、正式计划与步骤状态；断开不影响后台任务。",
+    response_class=StreamingResponse,
+)
+async def stream_turn(
+    turn_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    after_seq: int = Query(default=0, ge=0),
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+) -> Response:
+    turn = await session.get(AgentRun, turn_id)
+    if turn is None or turn.session_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "对话不存在")
+    try:
+        await sessions.get_for_user(session, turn.session_id, user.id)
+    except SessionNotFound as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "对话不存在") from exc
+
+    cursor = after_seq
+    if last_event_id and last_event_id.isdigit():
+        cursor = max(cursor, int(last_event_id))
+
+    # 流会持续数分钟，先释放请求级事务，避免一直占用数据库连接
+    await session.rollback()
+
+    async def stream() -> AsyncIterator[str]:
+        # 先订阅再读快照：两步之间的新事件会进入队列，按 seq 去重后补发
+        async with events.subscribe_turn(turn_id) as messages:
+            from app.db import SessionFactory
+
+            async with SessionFactory() as snap_session:
+                current = await snap_session.get(AgentRun, turn_id)
+                if current is None:
+                    return
+                snapshot = await turn_events.snapshot(current)
+            yield _event_frame(
+                _envelope(current, "turn.snapshot", {"turn": snapshot, "after_seq": cursor})
+            )
+            last_sent = current.last_event_seq
+            if snapshot["phase"] in {"completed", "failed", "canceled"}:
+                return
+
+            deadline = asyncio.get_running_loop().time() + _MAX_STREAM_SECONDS
+            async for message in messages:
+                if message is None:
+                    if asyncio.get_running_loop().time() > deadline:
+                        return
+                    yield ": ping\n\n"
+                    continue
+
+                seq = int(message.get("seq") or 0)
+                if seq <= last_sent:
+                    continue
+                last_sent = seq
+                yield _event_frame(message)
+
+                type_ = message.get("type")
+                phase = ((message.get("payload") or {}).get("turn") or {}).get("phase")
+                if type_ == "planning.failed" or phase in {
+                    "completed",
+                    "failed",
+                    "canceled",
+                }:
                     return
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers=_HEADERS)

@@ -11,6 +11,7 @@ from app.services import runs, selections
 from app.services.runtime_provider import image_client_for_run
 from app.tools.base import HIDDEN_MASK, LayerRef, MaskRef, ToolSpec
 from app.tools.context import ToolError, document_of, require_session
+from app.tools.quota_units import one
 from app.tools.target import (
     layer_image,
     layer_under_mask,
@@ -105,6 +106,7 @@ ERASE_REGION = ToolSpec(
     queued=True,
     session_required=True,
     agent_hidden=HIDDEN_MASK,
+    quota_units=one,
 )
 
 REPLACE_REGION = ToolSpec(
@@ -120,4 +122,5 @@ REPLACE_REGION = ToolSpec(
     queued=True,
     session_required=True,
     agent_hidden=HIDDEN_MASK,
+    quota_units=one,
 )

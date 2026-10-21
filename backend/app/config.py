@@ -62,6 +62,20 @@ class Settings(BaseSettings):
     # 文字识别 provider: auto（有 rapidocr 则拆出文字层）| rapidocr | none（测试强制）
     ocr_provider: str = "auto"
 
+    # 免费会员每日 AI 图片次数。首次启动时写入默认策略版本，之后以后台发布为准。
+    free_daily_limit: int = 5
+    # 是否真正拦截超额提交。关闭时仍记录预占与流水（shadow），便于核对调用链。
+    quota_enforce: bool = True
+    # 额度时区固定按该时区切自然日，不读宿主机本地时区
+    quota_timezone: str = "Asia/Shanghai"
+    # 结果未知的预占超过该分钟数后进入待人工核查
+    quota_unknown_minutes: int = 15
+
+    # 消息提交后先返回轮次、由 worker 规划。关闭时退回同步规划（测试与回滚开关）。
+    agent_async_planning: bool = True
+    # 规划租约时长；worker 崩溃后超过该时长由恢复扫描重新投递
+    agent_plan_lease_seconds: int = 300
+
     # 厂商 API Key 加密主密钥（Fernet url-safe base64，32 字节）。
     # 未设置时禁用密钥持久化：连接仍可登记，但保存时立即报错。
     secret_enc_key: str = ""

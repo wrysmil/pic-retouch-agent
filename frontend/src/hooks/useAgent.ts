@@ -1,10 +1,27 @@
 import { useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { agentApi } from '@/api/agent'
+import { agentApi, type DraftStep, type Turn } from '@/api/agent'
 import { isTerminal } from '@/api/runs'
+import { useRefreshQuota } from '@/hooks/useQuota'
 
 const turnsKey = (sessionId: string) => ['session', sessionId, 'messages']
+
+// 这些阶段后台还会继续推进，SSE 之外保留低频轮询兜底
+const OPEN_PHASES = new Set(['planning', 'executing'])
+const LIVE_PHASES = new Set(['planning', 'awaiting_confirmation', 'executing'])
+
+type TurnEvent = {
+  seq: number
+  type: string
+  payload: { turn?: Turn; draft?: DraftStep; text?: string; message?: string }
+}
+
+function mergeDraft(drafts: DraftStep[], draft: DraftStep): DraftStep[] {
+  return [...drafts.filter((item) => item.call_index !== draft.call_index), draft].sort(
+    (a, b) => a.call_index - b.call_index,
+  )
+}
 
 /** 计划推进后画布、历史、对话都要重取，三个动作共用同一份失效逻辑。 */
 function useRefreshTurn(sessionId: string) {
@@ -16,25 +33,120 @@ function useRefreshTurn(sessionId: string) {
   }
 }
 
+/**
+ * 订阅最新一轮的轮次事件。快照先重建界面，草稿/计划事件再增量更新；
+ * 断线由浏览器自动重连，带 after_seq 从数据库补齐。
+ */
+function useTurnStream(sessionId: string, turn: Turn | undefined) {
+  const queryClient = useQueryClient()
+  const id = turn && LIVE_PHASES.has(turn.phase) ? turn.id : null
+  const afterRef = useRef(turn?.last_event_seq ?? 0)
+  afterRef.current = turn?.last_event_seq ?? afterRef.current
+
+  useEffect(() => {
+    if (!id) return
+    const source = new EventSource(
+      `/events/agent-runs/${id}?after_seq=${afterRef.current}`,
+    )
+    let timer: number | undefined
+    let closed = false
+
+    const refresh = () => {
+      if (timer !== undefined) return
+      timer = window.setTimeout(() => {
+        timer = undefined
+        void queryClient.invalidateQueries({ queryKey: turnsKey(sessionId) })
+      }, 120)
+    }
+
+    source.onmessage = (event) => {
+      let data: TurnEvent
+      try {
+        data = JSON.parse(event.data) as TurnEvent
+      } catch {
+        return
+      }
+      let needsRefresh = false
+      const current = data.payload.turn
+      if (current) {
+        afterRef.current = Math.max(afterRef.current, current.last_event_seq)
+        queryClient.setQueryData<Turn[]>(turnsKey(sessionId), (turns) =>
+          turns?.map((item) => (item.id === current.id ? current : item)),
+        )
+        needsRefresh = true
+        void queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+        if (isTerminal(current.status)) {
+          void queryClient.invalidateQueries({ queryKey: ['session', sessionId, 'history'] })
+          closed = true
+          source.close()
+        }
+      }
+      if (data.type === 'planning.step.draft' && data.payload.draft) {
+        const draft = data.payload.draft
+        queryClient.setQueryData<Turn[]>(turnsKey(sessionId), (turns) =>
+          turns?.map((item) =>
+            item.id === id
+              ? { ...item, plan_draft: mergeDraft(item.plan_draft ?? [], draft) }
+              : item,
+          ),
+        )
+      }
+      if (data.type === 'planning.summary.delta' && typeof data.payload.text === 'string') {
+        // 文字流只在前端累加，避免每个 token 都回服务端拉一次
+        queryClient.setQueryData<Turn[]>(turnsKey(sessionId), (turns) =>
+          turns?.map((item) =>
+            item.id === id ? { ...item, public_summary: data.payload.text } : item,
+          ),
+        )
+      }
+      if (data.type === 'planning.failed') {
+        closed = true
+        source.close()
+        needsRefresh = true
+      }
+      // 计划下发时已经预占额度，这里同步刷新可用次数
+      if (data.type === 'plan.ready' || data.type === 'turn.updated') {
+        void queryClient.invalidateQueries({ queryKey: ['quota', 'entitlements'] })
+      }
+      if (!closed && needsRefresh) refresh()
+    }
+
+    // 浏览器自身会退避重连；这里只兜底轮询，不主动重建连接
+    source.onerror = () => {
+      if (!closed) refresh()
+    }
+
+    return () => {
+      closed = true
+      source.close()
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [id, sessionId, queryClient])
+}
+
 export function useTurns(sessionId: string) {
   const queryClient = useQueryClient()
   const query = useQuery({
     queryKey: turnsKey(sessionId),
     queryFn: () => agentApi.turns(sessionId),
-    // 第一步 SSE 结束时下一步可能还没写进计划，整轮 running 时接着拉，避免卡片停在「等待中」
-    refetchInterval: (current) =>
-      current.state.data?.at(-1)?.status === 'running' ? 800 : false,
+    // 规划/执行阶段轮询降为兜底，主要靠轮次 SSE 推进
+    refetchInterval: (current) => {
+      const latest = current.state.data?.at(-1)
+      return latest && OPEN_PHASES.has(latest.phase) ? 1500 : false
+    },
   })
 
-  const latest = query.data?.at(-1)?.status
-  const previous = useRef(latest)
+  const latest = query.data?.at(-1)
+  useTurnStream(sessionId, latest)
+
+  const previous = useRef(latest?.status)
   useEffect(() => {
     const wasRunning = previous.current === 'running'
-    previous.current = latest
-    if (!wasRunning || !latest || !isTerminal(latest)) return
+    previous.current = latest?.status
+    if (!wasRunning || !latest?.status || !isTerminal(latest.status)) return
     void queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
     void queryClient.invalidateQueries({ queryKey: ['session', sessionId, 'history'] })
-  }, [latest, sessionId, queryClient])
+  }, [latest?.status, sessionId, queryClient])
 
   useEffect(() => {
     previous.current = undefined
@@ -43,27 +155,50 @@ export function useTurns(sessionId: string) {
   return query
 }
 
+function requestId() {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 export function useSendMessage(sessionId: string) {
   const refresh = useRefreshTurn(sessionId)
+  const refreshQuota = useRefreshQuota()
+  // 同一轮提交（含误触的第二次调用）复用同一个请求键，落定后下次发送再换新键
+  const pendingId = useRef<string | null>(null)
   return useMutation({
-    mutationFn: (text: string) => agentApi.send(sessionId, text),
-    onSuccess: refresh,
+    mutationFn: (text: string) => {
+      pendingId.current ??= requestId()
+      return agentApi.send(sessionId, text, pendingId.current)
+    },
+    onSuccess: () => {
+      refresh()
+      refreshQuota()
+    },
+    onSettled: () => {
+      pendingId.current = null
+    },
   })
 }
 
 export function usePlanActions(sessionId: string) {
   const refresh = useRefreshTurn(sessionId)
+  const refreshQuota = useRefreshQuota()
+  const after = () => {
+    refresh()
+    refreshQuota()
+  }
   const confirm = useMutation({
     mutationFn: (turnId: string) => agentApi.confirm(sessionId, turnId),
-    onSuccess: refresh,
+    onSuccess: after,
   })
   const cancel = useMutation({
     mutationFn: (turnId: string) => agentApi.cancel(sessionId, turnId),
-    onSuccess: refresh,
+    onSuccess: after,
   })
   const retry = useMutation({
     mutationFn: (turnId: string) => agentApi.retry(sessionId, turnId),
-    onSuccess: refresh,
+    onSuccess: after,
   })
   return {
     confirm: (turnId: string) => confirm.mutate(turnId),

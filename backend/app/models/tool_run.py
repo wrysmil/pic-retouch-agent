@@ -51,3 +51,9 @@ class ToolRun(UUIDBase):
         default=None,
         index=True,
     )
+    # 属于哪一轮 Agent 计划的哪一步；直接关联后不再靠扫描最近 20 轮反查
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), default=None, index=True
+    )
+    step_id: Mapped[str | None] = mapped_column(String(32), default=None)
+    attempt: Mapped[int] = mapped_column(default=1, nullable=False)

@@ -32,6 +32,7 @@ from app.services import assets, runs, selections
 from app.services.runtime_provider import image_client_for_run
 from app.tools.base import HIDDEN_MASK, MaskRef, ToolSpec
 from app.tools.context import ToolError, document_of, flatten_session, require_session
+from app.tools.quota_units import one
 from app.tools.target import require_selection
 
 # 修补指令必须写死两件事：只修缺口、不新增物体。少了后半句，模型面对一块
@@ -241,6 +242,8 @@ SPLIT_LAYERS = ToolSpec(
     handler=split_layers_exec,
     queued=True,
     session_required=True,
+    # 拆层会用图片模型补齐主体移走后的背景空洞
+    quota_units=one,
 )
 
 PROMOTE_OBJECT = ToolSpec(
@@ -255,4 +258,5 @@ PROMOTE_OBJECT = ToolSpec(
     queued=True,
     session_required=True,
     agent_hidden=HIDDEN_MASK,
+    quota_units=one,
 )

@@ -6,9 +6,10 @@ from fastapi.responses import Response
 
 from app.db import SessionDep
 from app.deps import CurrentUser
+from app.routers.quota import quota_http_error
 from app.schemas.batch import BatchIn, BatchOut
 from app.schemas.run import RunOut
-from app.services import batch, runs, tools
+from app.services import batch, quota, runs, tools
 from app.services.batch import EmptyBatch, UnknownBatchAsset
 from app.services.runs import RunNotFound
 from app.services.tools import InvalidParams
@@ -32,6 +33,8 @@ async def create_batch(payload: BatchIn, user: CurrentUser, session: SessionDep)
         run = await tools.submit(session, user.id, BATCH_NAME, payload.model_dump(mode="json"))
     except InvalidParams as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    except quota.QuotaExhausted as exc:
+        raise quota_http_error(exc) from exc
     return RunOut.of(run)
 
 

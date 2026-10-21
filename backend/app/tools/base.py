@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ToolRun
+from app.tools.quota_units import zero
+
 
 # 工具执行函数的统一签名，登记表里所有工具都长这样。
 #   AsyncSession  数据库连接，读写记录的抓手，由调用方一路透传
@@ -67,6 +69,8 @@ class ToolSpec:
     agent_hidden: tuple[str, ...] = field(default_factory=tuple)
     # 同一工具按参数细分说法，例如翻转要分水平与垂直，返回 None 则用 label
     detail: Callable[[dict], str | None] | None = None
+    # 按已校验参数估算本次要预占的 AI 图片次数；本地处理保持 0
+    quota_units: Callable[[dict], int] = zero
 
     def label_for(self, params: dict | None = None) -> str:
         refined = self.detail(params or {}) if self.detail else None

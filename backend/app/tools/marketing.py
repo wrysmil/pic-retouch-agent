@@ -12,6 +12,7 @@ from app.services import assets, runs
 from app.services.runtime_provider import image_client_for_run
 from app.tools.base import ToolSpec
 from app.tools.context import flatten_session, require_session
+from app.tools.quota_units import count_of
 
 
 class MarketingKind(enum.StrEnum):
@@ -158,6 +159,7 @@ GENERATE_MARKETING = ToolSpec(
     handler=generate_marketing_exec,
     queued=True,
     session_required=True,
+    quota_units=count_of,
 )
 
 PREPARE_DELIVERY_SIZES = ToolSpec(

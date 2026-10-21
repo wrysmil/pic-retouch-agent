@@ -39,6 +39,7 @@ export function useCreateBatch() {
     mutationFn: (input: BatchInput) => batchesApi.create(input),
     onSuccess: (run) => {
       void queryClient.invalidateQueries({ queryKey: LIST_KEY })
+      void queryClient.invalidateQueries({ queryKey: ['quota', 'entitlements'] })
       queryClient.setQueryData(batchKey(run.id), undefined)
     },
     onError: (error) => toast(errorMessage(error), 'danger'),

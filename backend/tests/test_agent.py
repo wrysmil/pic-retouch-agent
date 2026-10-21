@@ -449,3 +449,104 @@ async def test_failed_step_can_be_retried(signed_in: httpx.AsyncClient, fake_pla
     ).json()
     assert retried["status"] == "running"
     assert retried["steps"][0]["run_id"] != failed["steps"][0]["run_id"]
+
+
+async def test_async_turn_returns_immediately_then_plans(
+    signed_in: httpx.AsyncClient, fake_planner
+):
+    """POST 先返回 planning 轮次，worker 再补草稿与正式计划。"""
+    from app.config import get_settings
+    from app.db import SessionFactory
+    from app.services import agent as agent_service
+
+    settings = get_settings()
+    original = settings.agent_async_planning
+    settings.agent_async_planning = True
+    try:
+        fake_planner(tool_call("flip_layer", {"direction": "horizontal"}))
+        session_id = (await open_session(signed_in))["id"]
+
+        response = await signed_in.post(
+            f"/api/sessions/{session_id}/messages",
+            json={"text": "水平翻转", "request_id": "req-async-1"},
+        )
+        assert response.status_code == 202
+        turn = response.json()
+        assert turn["phase"] == "planning"
+        assert turn["steps"] == []
+
+        async with SessionFactory() as session:
+            await agent_service.plan_turn(session, uuid.UUID(turn["id"]))
+
+        planned = (
+            await signed_in.get(f"/api/sessions/{session_id}/messages/{turn['id']}")
+        ).json()
+        assert planned["phase"] == "completed"
+        assert planned["status"] == "succeeded"
+        assert [step["tool"] for step in planned["steps"]] == ["flip_layer"]
+        assert planned["plan_draft"] == []
+    finally:
+        settings.agent_async_planning = original
+
+
+async def test_duplicate_message_request_returns_same_turn(
+    signed_in: httpx.AsyncClient, fake_planner
+):
+    from app.config import get_settings
+
+    settings = get_settings()
+    original = settings.agent_async_planning
+    settings.agent_async_planning = True
+    try:
+        fake_planner(AIMessage(content="好的。"))
+        session_id = (await open_session(signed_in))["id"]
+        body = {"text": "看看这张图", "request_id": "req-idem-1"}
+
+        first = await signed_in.post(f"/api/sessions/{session_id}/messages", json=body)
+        second = await signed_in.post(f"/api/sessions/{session_id}/messages", json=body)
+        assert first.json()["id"] == second.json()["id"]
+
+        conflict = await signed_in.post(
+            f"/api/sessions/{session_id}/messages",
+            json={"text": "换成另一句话", "request_id": "req-idem-1"},
+        )
+        assert conflict.status_code == 409
+
+        turns = (await signed_in.get(f"/api/sessions/{session_id}/messages")).json()
+        assert len(turns) == 1
+    finally:
+        settings.agent_async_planning = original
+
+
+async def test_streamed_plain_answer_keeps_full_text(
+    signed_in: httpx.AsyncClient, fake_planner
+):
+    """流式规划里用户已经看着文字出现，结束时不能只留第一句。"""
+    from app.config import get_settings
+    from app.db import SessionFactory
+    from app.services import agent as agent_service
+
+    settings = get_settings()
+    original = settings.agent_async_planning
+    settings.agent_async_planning = True
+    try:
+        poem = "春风又绿江南岸。\n明月何时照我还。"
+        fake_planner(AIMessage(content=poem))
+        session_id = (await open_session(signed_in))["id"]
+
+        response = await signed_in.post(
+            f"/api/sessions/{session_id}/messages",
+            json={"text": "写一首诗", "request_id": "req-poem-1"},
+        )
+        turn = response.json()
+
+        async with SessionFactory() as session:
+            await agent_service.plan_turn(session, uuid.UUID(turn["id"]))
+
+        planned = (
+            await signed_in.get(f"/api/sessions/{session_id}/messages/{turn['id']}")
+        ).json()
+        assert planned["phase"] == "completed"
+        assert planned["reply"] == poem
+    finally:
+        settings.agent_async_planning = original

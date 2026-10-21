@@ -1,12 +1,14 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
-import type { PlanStep, StepStatus, Turn } from '@/api/agent'
+import type { DraftStep, PlanStep, StepStatus, Turn } from '@/api/agent'
 import { isTerminal } from '@/api/runs'
 import AiBadge from '@/components/ui/AiBadge'
 import Button from '@/components/ui/Button'
+import Markdown from '@/components/ui/Markdown'
 import ProgressBar from '@/components/ui/ProgressBar'
 import { usePlanActions, useTurns } from '@/hooks/useAgent'
+import { formatResetAt, useEntitlements } from '@/hooks/useQuota'
 import { useRun } from '@/hooks/useRun'
 import { isAiGeneration } from '@/lib/tools'
 
@@ -62,8 +64,10 @@ function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
 
       {turn.error ? (
         <p className="text-danger mr-6 text-xs leading-relaxed">{turn.error}</p>
+      ) : turn.phase === 'planning' ? (
+        <PlanningBlock turn={turn} />
       ) : (
-        <p className="text-ink mr-6 text-xs leading-relaxed">{turn.reply}</p>
+        <Markdown text={turn.reply} className="mr-6 text-xs" />
       )}
 
       {turn.steps.map((step, index) => (
@@ -75,21 +79,97 @@ function TurnBlock({ turn, sessionId }: { turn: Turn; sessionId: string }) {
   )
 }
 
+// 后端在轮次刚创建时先放这句占位，真正的公开说明会随后流式覆盖它
+const PLANNING_PLACEHOLDER = '正在安排…'
+
+function PlanningBlock({ turn }: { turn: Turn }) {
+  const text =
+    turn.public_summary && turn.public_summary !== PLANNING_PLACEHOLDER
+      ? turn.public_summary
+      : ''
+  return (
+    <div className="mr-6 space-y-1.5">
+      <div className="text-ink flex items-baseline gap-1 text-xs leading-relaxed">
+        {!text && (
+          <span className="bg-brand relative mr-0.5 inline-flex size-1.5 self-center" aria-hidden>
+            <span className="bg-brand absolute inline-flex size-full animate-ping rounded-full opacity-50" />
+            <span className="bg-brand relative inline-flex size-1.5 rounded-full" />
+          </span>
+        )}
+        <Markdown text={text || PLANNING_PLACEHOLDER} className="min-w-0 flex-1" />
+        <span
+          className="bg-brand-strong ml-0.5 inline-block h-3 w-[2px] translate-y-[1px] animate-pulse self-center"
+          aria-hidden
+        />
+      </div>
+      {turn.plan_draft.map((draft, index) => (
+        <DraftCard key={draft.id} index={index + 1} draft={draft} />
+      ))}
+    </div>
+  )
+}
+
+function DraftCard({ index, draft }: { index: number; draft: DraftStep }) {
+  const prompt =
+    typeof draft.params.prompt === 'string' ? draft.params.prompt : null
+  const count = typeof draft.params.count === 'number' ? draft.params.count : null
+  return (
+    <div className="border-line mr-6 rounded-[12px] border border-dashed px-3 py-2 opacity-80">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-muted text-xs font-medium">
+          {index}. {draft.label}
+        </span>
+        <span className="text-faint shrink-0 text-[10px]">草稿 · 尚未校验</span>
+      </div>
+      {(prompt || count) && (
+        <p className="text-faint mt-1 truncate text-[10px]">
+          {prompt}
+          {count ? `${prompt ? ' · ' : ''}${count} 张` : ''}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function PlanActions({ turn, sessionId }: { turn: Turn; sessionId: string }) {
   const actions = usePlanActions(sessionId)
-  if (turn.status === 'queued') {
+  const entitlements = useEntitlements()
+  if (turn.phase === 'planning') {
     return (
-      <div className="mr-6 flex gap-1.5">
-        <Action disabled={actions.busy} onClick={() => actions.confirm(turn.id)}>
-          执行计划
-        </Action>
+      <div className="mr-6">
         <Action disabled={actions.busy} onClick={() => actions.cancel(turn.id)}>
-          取消
+          取消规划
         </Action>
       </div>
     )
   }
-  if (turn.status === 'running') {
+  if (turn.phase === 'awaiting_confirmation') {
+    const units = turn.steps
+      .filter((step) => step.status === 'waiting' || step.status === 'pending')
+      .reduce((sum, step) => sum + step.units, 0)
+    const available = entitlements.data?.available
+    const short = units > 0 && available !== undefined && available < units
+    return (
+      <div className="mr-6 space-y-1.5">
+        <div className="flex gap-1.5">
+          <Action
+            disabled={actions.busy || short}
+            onClick={() => actions.confirm(turn.id)}
+          >
+            执行计划
+          </Action>
+          <Action disabled={actions.busy} onClick={() => actions.cancel(turn.id)}>
+            取消
+          </Action>
+        </div>
+        <p className={`text-[10px] leading-relaxed ${short ? 'text-danger' : 'text-muted'}`}>
+          预计消耗 {units} 次 · 可用 {available ?? '—'} 次
+          {short && `，${formatResetAt(entitlements.data)}后恢复`}
+        </p>
+      </div>
+    )
+  }
+  if (turn.phase === 'executing') {
     return (
       <div className="mr-6">
         <Action disabled={actions.busy} onClick={() => actions.cancel(turn.id)}>
@@ -98,7 +178,7 @@ function PlanActions({ turn, sessionId }: { turn: Turn; sessionId: string }) {
       </div>
     )
   }
-  if (turn.status === 'failed') {
+  if (turn.phase === 'failed') {
     return (
       <div className="mr-6">
         <Action disabled={actions.busy} onClick={() => actions.retry(turn.id)}>

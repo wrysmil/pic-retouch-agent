@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 
 import BrandMark from '@/components/BrandMark'
+import QuotaCard from '@/components/quota/QuotaCard'
 import ToastHost from '@/components/ToastHost'
 import { useAuthActions, useCurrentUser } from '@/hooks/useAuth'
 
@@ -62,6 +63,9 @@ export default function WorkbenchLayout() {
           </ul>
 
           <div className="border-line mt-2 border-t px-2 pt-3">
+            <div className="mb-2">
+              <QuotaCard />
+            </div>
             <button
               type="button"
               onClick={signOut}

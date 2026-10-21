@@ -1,9 +1,26 @@
+export type StructuredDetail = {
+  code?: string
+  message?: string
+  available?: number
+  required?: number
+  reset_at?: string
+}
+
 export class ApiError extends Error {
   status: number
+  code: string | null
+  detail: StructuredDetail | null
 
-  constructor(status: number, message: string) {
+  constructor(
+    status: number,
+    message: string,
+    code: string | null = null,
+    detail: StructuredDetail | null = null,
+  ) {
     super(message)
     this.status = status
+    this.code = code
+    this.detail = detail
   }
 }
 
@@ -28,7 +45,21 @@ function formatDetail(detail: unknown, fallback: string): string {
 /** 上传与下载走原生 fetch，错误一律经这里构造，文案格式与 JSON 请求保持一致。 */
 export async function apiError(response: Response, fallback: string): Promise<ApiError> {
   const body = await response.json().catch(() => null)
-  return new ApiError(response.status, formatDetail(body?.detail, fallback))
+  const detail = body?.detail
+  // 业务错误用对象 detail 带上 code 与额度信息；逻辑判断只看 code，不匹配中文字符串
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    return new ApiError(
+      response.status,
+      messageOf(detail) || fallback,
+      typeof detail.code === 'string' ? detail.code : null,
+      detail,
+    )
+  }
+  return new ApiError(response.status, formatDetail(detail, fallback))
+}
+
+export function isQuotaExhausted(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.code === 'QUOTA_EXHAUSTED'
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

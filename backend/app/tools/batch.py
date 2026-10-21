@@ -4,6 +4,7 @@ from app.models.tool_run import ToolRun
 from app.schemas.batch import BatchIn
 from app.services import batch
 from app.tools.base import ToolSpec
+from app.tools.quota_units import batch_units
 
 BATCH_NAME = "batch_process"
 
@@ -23,4 +24,5 @@ BATCH_PROCESS = ToolSpec(
     handler=batch_process_exec,
     queued=True,
     session_required=False,
+    quota_units=batch_units,
 )

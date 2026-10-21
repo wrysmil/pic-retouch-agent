@@ -1,3 +1,4 @@
+from contextvars import ContextVar
 from functools import lru_cache
 from typing import TypedDict
 
@@ -35,7 +36,9 @@ _SYSTEM = """你是电商图片修图助手，通过调用工具完成用户的�
   不要裁切主体，也不要用 crop_canvas。
 - 对多张图做同一套去背景、换背景、调色、超分、扩图或改尺寸时用 batch_process。
   单张精修、营销图、局部编辑和拆层不要用它。
-- 调用工具时不要输出解释或工具名。只有指令与修图无关、或现有工具确实做不到时，
+- 动手前先用一句不超过 20 字的中文说明你打算怎么改，让用户看到进展。
+  这句话只说人话，不要出现工具名、参数名或内部字段；无论用户用什么语言，一律用中文。
+- 工具调用本身不需要再解释。只有指令与修图无关、或现有工具确实做不到时，
   才用一句中文说明，不要提内部参数。
 
 当前画布：{context}"""
@@ -46,26 +49,33 @@ _FALLBACK_REPLY = "没太理解这条指令，换个说法或说得更具体一�
 _REFUSAL_LIMIT = 60
 
 
-class AgentState(TypedDict):
+class AgentState(TypedDict, total=False):
     """图内流转的状态字典。
 
-    各节点只返回自己改动的 key，LangGraph 按 key 覆盖合并，
-    所以不需要每个节点都把整个 state 原样回传。
+    只放可序列化数据：客户端、DB 连接、事件 writer 都不进入 checkpoint。
+    模型客户端通过 ContextVar 在运行时注入，恢复时由 worker 重新解析。
     """
 
+    turn_id: str
     goal: str
     context: str
-    # 运行时由 services/agent 注入；节点用它调模型。把它放进 state 是为了让图保持纯函数风格
-    planner: ChatOpenAI
     plan: list[dict]
     reply: str
+
+
+# 运行时依赖：只在当前调用栈有效，不会被 LangGraph 序列化
+_planner: ContextVar = ContextVar("planner", default=None)
 
 
 async def _plan(state: AgentState) -> AgentState:
     """调模型规划一轮：把画布摘要与用户指令一次性发给它，拿回工具调用。"""
 
+    planner = _planner.get()
+    if planner is None:
+        raise RuntimeError("规划客户端未注入")
+
     # 每次都是全新的两条消息，不带历史，模型对上一轮无记忆
-    message = await state["planner"].ainvoke(
+    message = await planner.ainvoke(
         [
             SystemMessage(_SYSTEM.format(context=state["context"])),
             HumanMessage(state["goal"]),
@@ -92,10 +102,7 @@ def _verify(state: AgentState) -> AgentState:
         return {"plan": [], "reply": f"这一步暂时执行不了：{exc}"}
 
 
-@lru_cache
-def _graph():
-    """编译并缓存图。图的拓扑是静态的，编译一次即可，反复调用不再付出构建成本。"""
-
+def _builder() -> StateGraph:
     builder = StateGraph(AgentState)
     builder.add_node("plan", _plan)
     builder.add_node("verify", _verify)
@@ -103,28 +110,71 @@ def _graph():
     builder.add_edge(START, "plan")
     builder.add_edge("plan", "verify")
     builder.add_edge("verify", END)
-    return builder.compile()
+    return builder
 
 
-async def run(goal: str, context: str, planner: ChatOpenAI) -> tuple[str, list[dict]]:
+@lru_cache
+def _graph():
+    """无 checkpoint 的图，供测试或 saver 不可用时回退。"""
+
+    return _builder().compile()
+
+
+def graph_with(saver):
+    """按 saver 编译一份带持久化的图。图拓扑很小，按需编译成本可接受。"""
+
+    return _builder().compile(checkpointer=saver)
+
+
+async def run(
+    goal: str,
+    context: str,
+    planner: ChatOpenAI,
+    *,
+    turn_id: str | None = None,
+    thread_id: str | None = None,
+    saver=None,
+) -> tuple[str, list[dict]]:
     """规划并校验一轮指令，返回答复与尚未下发的计划。
 
-    planner 来自 services/model_runtime，绑定到具体已发布的连接 + 模型版本，
-    同一轮内的所有步骤共用同一个版本引用。
+    planner 来自 services/model_runtime，绑定到具体已发布的连接 + 模型版本。
+    提供 thread_id + saver 时写入 checkpoint；线程里已有未完成节点时从断点继续。
     """
 
     bound = bind_tools(planner)
-    state = await _graph().ainvoke(
-        {"goal": goal, "context": context, "planner": bound, "plan": [], "reply": ""}
-    )
-    return spoken(state["reply"], state["plan"]), state["plan"]
+    token = _planner.set(bound)
+    inputs = {
+        "turn_id": turn_id or "",
+        "goal": goal,
+        "context": context,
+        "plan": [],
+        "reply": "",
+    }
+    try:
+        if saver is not None and thread_id:
+            graph = graph_with(saver)
+            config = {"configurable": {"thread_id": thread_id}}
+            snapshot = await graph.aget_state(config)
+            if snapshot.next and snapshot.values.get("plan"):
+                # 规划节点已完成、校验节点未跑完：直接续跑，不再调用模型
+                state = await graph.ainvoke(None, config)
+            else:
+                state = await graph.ainvoke(inputs, config)
+        else:
+            state = await _graph().ainvoke(inputs)
+    finally:
+        _planner.reset(token)
+    return spoken(state.get("reply", ""), state.get("plan", [])), state.get("plan", [])
 
 
-def spoken(reply: str, plan: list[dict]) -> str:
+def spoken(reply: str, plan: list[dict], *, keep_full: bool = False) -> str:
     """有计划就按步骤说话；没计划才用兜底或截成一句拒绝。
 
     模型有时会边调工具边讲解，甚至把参数名说出来，那些话对用户没有信息量。
     步骤标签本身就是最准确的说明。
+
+    keep_full=True 用于流式规划：用户已经看着这段文字逐字出现，结束时再截断
+    会让内容凭空消失（例如模型写了一整首诗，只剩第一句）。
     """
 
     text = (reply or "").strip()
@@ -135,6 +185,8 @@ def spoken(reply: str, plan: list[dict]) -> str:
         if len(plan) > 1:
             return f"将按以下步骤执行：{labels}。确认后开始。"
         return f"好，正在{labels}。"
+    if keep_full and text:
+        return text
     return _one_sentence(text) if text else _FALLBACK_REPLY
 
 

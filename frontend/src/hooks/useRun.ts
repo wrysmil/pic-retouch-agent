@@ -9,7 +9,18 @@ type Progress = Pick<Run, 'id' | 'tool' | 'status' | 'progress' | 'stage' | 'err
 const runKey = (id: string) => ['run', id]
 
 export function useGenerate() {
-  return useMutation({ mutationFn: (input: GenerateInput) => runsApi.generate(input) })
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (input: GenerateInput) => runsApi.generate(input),
+    onSuccess: () => {
+      // 提交时已预占，先刷新一次；结算后 SSE 终态会再刷新一次
+      void queryClient.invalidateQueries({ queryKey: ['quota', 'entitlements'] })
+    },
+  })
+}
+
+function refreshQuota(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: ['quota', 'entitlements'] })
 }
 
 /**
@@ -38,6 +49,7 @@ export function useRun(runId: string | null) {
       if (isTerminal(payload.status)) {
         source.close()
         void queryClient.invalidateQueries({ queryKey: runKey(runId) })
+        refreshQuota(queryClient)
       }
     }
 

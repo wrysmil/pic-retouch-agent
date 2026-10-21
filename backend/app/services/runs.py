@@ -48,11 +48,16 @@ async def create(
     session_id: uuid.UUID | None = None,
     *,
     runtime_config_version_id: uuid.UUID | None = None,
+    turn_id: uuid.UUID | None = None,
+    step_id: str | None = None,
+    attempt: int = 1,
+    commit: bool = True,
 ) -> ToolRun:
     """
     创建新任务记录。
 
     - **runtime_config_version_id**: 任务调度时锁定的模型版本；留空表示老任务未启用版本机制
+    - **commit**: 为 False 时只 flush 分配 id，由调用方把任务与额度预占放在同一事务提交
     """
     run = ToolRun(
         user_id=user_id,
@@ -61,10 +66,15 @@ async def create(
         params=params,
         stage="等待开始",
         runtime_config_version_id=runtime_config_version_id,
+        turn_id=turn_id,
+        step_id=step_id,
+        attempt=attempt,
     )
     session.add(run)
-    await session.commit()
-    await session.refresh(run)
+    await session.flush()
+    if commit:
+        await session.commit()
+        await session.refresh(run)
     return run
 
 

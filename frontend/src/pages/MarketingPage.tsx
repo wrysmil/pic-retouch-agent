@@ -8,6 +8,7 @@ import type { Asset } from '@/api/assets'
 import type { SessionDetail } from '@/api/sessions'
 import { errorMessage } from '@/hooks/useAuth'
 import { useAssetLibrary } from '@/hooks/useAssets'
+import { useEntitlements } from '@/hooks/useQuota'
 import {
   useCreateSession,
   useExportPack,
@@ -72,8 +73,10 @@ function Workspace({ sessionId }: { sessionId: string }) {
   const { data: session, isError } = useSession(sessionId)
   const tools = useSessionTools(sessionId)
   const pack = useExportPack(sessionId)
+  const entitlements = useEntitlements()
   const [copy, setCopy] = useState('')
   const [picked, setPicked] = useState<string[] | null>(null)
+  const noQuota = entitlements.data?.available === 0
 
   const selected = useMemo(() => {
     if (!session) return []
@@ -161,6 +164,10 @@ function Workspace({ sessionId }: { sessionId: string }) {
 
       <section className="mb-8">
         <SectionHead title="四类营销图" hint="以当前画布为参考生成，结果进图片墙，不改画布。" />
+        <p className={`mb-3 text-[11px] ${noQuota ? 'text-danger' : 'text-faint'}`}>
+          每成功生成 1 张消耗 1 次 · 今日可用 {entitlements.data?.available ?? '—'} 次
+          {noQuota && '，额度重置后可继续'}
+        </p>
         <input
           value={copy}
           onChange={(event) => setCopy(event.target.value)}
@@ -174,7 +181,7 @@ function Workspace({ sessionId }: { sessionId: string }) {
               key={item.id}
               label={item.label}
               hint={item.hint}
-              disabled={tools.busy}
+              disabled={tools.busy || noQuota}
               running={tools.isRunning('generate_marketing', (params) => params.kind === item.id)}
               onGenerate={() =>
                 tools.invoke('generate_marketing', {
@@ -190,7 +197,7 @@ function Workspace({ sessionId }: { sessionId: string }) {
       <section className="mb-8">
         <SectionHead
           title="投放尺寸"
-          hint="扩到目标比例，主体不被裁切。默认可一次出三个投放尺寸。"
+          hint="扩到目标比例，主体不被裁切。默认可一次出三个投放尺寸；本地适配不消耗次数。"
         />
         <div className="flex flex-wrap gap-2">
           <button

@@ -18,6 +18,8 @@ class AuditAction(enum.StrEnum):
     USER_DISABLED = "user.disabled"
     USER_PASSWORD_RESET = "user.password_reset"
     USER_SESSIONS_REVOKED = "user.sessions_revoked"
+    MEMBERSHIP_POLICY_PUBLISHED = "membership_policy.published"
+    QUOTA_ADJUSTED = "quota.adjusted"
 
 
 class AdminAuditLog(UUIDBase):

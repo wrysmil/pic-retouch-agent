@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import Button from '@/components/ui/Button'
+import { formatResetAt, useEntitlements } from '@/hooks/useQuota'
 
 export default function MessageComposer({
   pending,
@@ -14,6 +15,8 @@ export default function MessageComposer({
   onSend: (text: string) => void
 }) {
   const [text, setText] = useState('')
+  const entitlements = useEntitlements()
+  const empty = entitlements.data?.available === 0
   const canSend = text.trim().length > 0 && !pending
 
   const submit = () => {
@@ -38,6 +41,14 @@ export default function MessageComposer({
         aria-label="修图指令"
         className="border-line text-ink placeholder:text-faint rounded-control focus:border-line-strong w-full resize-none border px-3 py-2 text-xs leading-relaxed outline-none transition-colors"
       />
+      <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px]">
+        <span className="text-faint">每成功生成 1 张消耗 1 次</span>
+        <span className={empty ? 'text-danger' : 'text-muted'}>
+          {empty
+            ? `${formatResetAt(entitlements.data)}后恢复`
+            : `今日剩余 ${entitlements.data?.available ?? '—'} 次`}
+        </span>
+      </div>
       <Button variant="solid" block className="mt-2 py-2" disabled={!canSend} onClick={submit}>
         {pending ? '思考中…' : '发送'}
       </Button>

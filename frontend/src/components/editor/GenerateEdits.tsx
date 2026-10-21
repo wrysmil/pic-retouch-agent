@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import type { Ratio } from '@/api/runs'
+import QuotaCost, { useAffordable } from '@/components/quota/QuotaCost'
 import Button from '@/components/ui/Button'
 
 const RATIOS: { value: Ratio; label: string }[] = [
@@ -26,6 +27,7 @@ export function BackgroundForm({
   const [prompt, setPrompt] = useState('')
   const [count, setCount] = useState(1)
   const ready = prompt.trim().length > 0
+  const cost = useAffordable('replace_background', { count })
 
   return (
     <section className="border-line border-b px-4 py-4">
@@ -58,18 +60,19 @@ export function BackgroundForm({
           </Button>
         ))}
       </div>
+      <QuotaCost tool="replace_background" params={{ count }} className="mt-2" />
       <Button
         ai
         variant="solid"
         block
-        className="mt-3"
-        disabled={disabled || !ready}
+        className="mt-2"
+        disabled={disabled || !ready || cost.short}
         onClick={() => {
           onApply({ prompt: prompt.trim(), count })
           setPrompt('')
         }}
       >
-        生成
+        {cost.short ? '次数不足' : '生成'}
       </Button>
     </section>
   )
@@ -85,6 +88,7 @@ export function ExpandForm({
   onApply: (params: { ratio: Ratio }) => void
 }) {
   const [ratio, setRatio] = useState<Ratio>('16:9')
+  const cost = useAffordable('expand_canvas', {})
 
   return (
     <section className="border-line border-b px-4 py-4">
@@ -109,15 +113,16 @@ export function ExpandForm({
           </Button>
         ))}
       </div>
+      <QuotaCost tool="expand_canvas" params={{}} className="mt-2" />
       <Button
         ai
         variant="solid"
         block
-        className="mt-3"
-        disabled={disabled}
+        className="mt-2"
+        disabled={disabled || cost.short}
         onClick={() => onApply({ ratio })}
       >
-        扩展
+        {cost.short ? '次数不足' : '扩展'}
       </Button>
     </section>
   )
@@ -132,6 +137,7 @@ export function ReplaceForm({
 }) {
   const [prompt, setPrompt] = useState('')
   const ready = prompt.trim().length > 0
+  const cost = useAffordable('replace_region', {})
 
   return (
     <section className="border-line border-b px-4 py-4">
@@ -147,18 +153,19 @@ export function ReplaceForm({
         placeholder="例如：把杯子换成陶瓷马克杯"
         className={FIELD}
       />
+      <QuotaCost tool="replace_region" params={{}} className="mt-2" />
       <Button
         ai
         variant="solid"
         block
-        className="mt-3"
-        disabled={disabled || !ready}
+        className="mt-2"
+        disabled={disabled || !ready || cost.short}
         onClick={() => {
           onApply({ prompt: prompt.trim() })
           setPrompt('')
         }}
       >
-        替换
+        {cost.short ? '次数不足' : '替换'}
       </Button>
     </section>
   )

@@ -9,7 +9,7 @@ from app.models import Asset, ToolRun
 from app.models.tool_run import RunStatus
 from app.providers import ProviderError
 from app.queue import enqueue
-from app.services import assets, runs, sessions
+from app.services import assets, quota, runs, sessions
 from app.tools import UnknownTool, spec_of
 from app.tools.context import ToolError
 
@@ -52,6 +52,9 @@ async def submit(
     session_id: uuid.UUID | None = None,
     *,
     runtime_config_version_id: uuid.UUID | None = None,
+    turn_id: uuid.UUID | None = None,
+    step_id: str | None = None,
+    attempt: int = 1,
 ) -> ToolRun:
     """校验参数并投递执行：画布工具当场执行，像素工具入队。
 
@@ -82,19 +85,39 @@ async def submit(
             raise InvalidParams("尚未配置模型运行配置，无法提交任务")
         runtime_config_version_id = current.id
 
-    # 创建 ToolRun 记录，用来任务跟踪进度、失败原因、耗时统计、历史列表
+    checked = validate(tool, params)
+    # 创建记录与额度预占必须同一事务：不能任务已经开始跑、步骤却还没关联
     run = await runs.create(
         session,
         user_id,
         tool,
-        validate(tool, params),
+        checked,
         session_id,
         runtime_config_version_id=runtime_config_version_id,
+        turn_id=turn_id,
+        step_id=step_id,
+        attempt=attempt,
+        commit=False,
     )
+    try:
+        await quota.reserve(
+            session,
+            user_id,
+            spec.quota_units(checked),
+            logical_key=f"run:{run.id}",
+            run_id=run.id,
+            turn_id=turn_id,
+            step_id=step_id,
+        )
+    except Exception:
+        await session.rollback()
+        raise
+    await session.commit()
+    await session.refresh(run)
+
     if spec.queued:
         # 像素类工具：耗时从秒到分钟，不能占着 HTTP 请求干等，入队交给 worker
-        # ← 只把 id 塞进队列
-        # 入队的只有 run.id。worker 在队列里拿到这个 id，用 runs.load() 从数据库把整条记录读回来，才知道该跑什么工具
+        # 只把 id 塞进队列；worker 用 runs.load() 读回整条记录
         await enqueue(TASK, run.id)
     else:
         # 画布类工具：只改文档里的数字，毫秒级，当场跑完
@@ -120,13 +143,18 @@ async def execute(session: AsyncSession, run: ToolRun) -> None:
         await _record(session, run, result)
     except (ProviderError, UnknownTool, ToolError) as exc:
         # 预期内的失败：这些异常的信息本身就是给人看的，直接原样写进 run.error
+        await quota.release_run(session, run.id, reason="执行失败")
         await runs.finish(session, run, status=RunStatus.FAILED, error=str(exc))
     except Exception:
         # 意料之外的异常：细节记日志，不回给前端，避免泄露堆栈或内部信息
         logger.exception("工具执行异常 tool=%s run_id=%s", run.tool, run.id)
         await session.rollback()
+        await quota.release_run(session, run.id, reason="执行异常")
         await runs.finish(session, run, status=RunStatus.FAILED, error="执行失败，请重试")
     else:
+        await quota.settle_run(
+            session, run.id, _delivered(spec, run, result), reason="执行成功"
+        )
         await runs.finish(session, run, status=RunStatus.SUCCEEDED, result=result)
 
     # 这一步属于某轮多步计划时，按计划推进后续依赖。放在最后且用局部导入：
@@ -134,6 +162,35 @@ async def execute(session: AsyncSession, run: ToolRun) -> None:
     from app.services import agent as agent_service
 
     await agent_service.continue_plan(session, run)
+
+
+def _delivered(spec, run: ToolRun, result: dict) -> int:
+    """成功执行后按实际可访问产物结算，多预占的部分释放。
+
+    生图类一次返回多张，按 asset_ids 数量结算；批量按成功素材数均摊每个素材的
+    AI 单元。工具成功却没有产物时保守按预占全扣，避免白送外部调用。
+    """
+
+    units = spec.quota_units(run.params or {})
+    if units <= 0:
+        return 0
+
+    asset_ids = result.get("asset_ids") or []
+    if asset_ids:
+        return min(units, len(asset_ids))
+
+    items = result.get("items")
+    if isinstance(items, list) and items:
+        succeeded = sum(
+            1
+            for item in items
+            if isinstance(item, dict) and item.get("status") == "succeeded"
+        )
+        total = len(items)
+        per_asset = max(1, units // total)
+        return min(units, per_asset * succeeded)
+
+    return units
 
 
 async def _record(session: AsyncSession, run: ToolRun, result: dict) -> None:

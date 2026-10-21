@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import { RATIO_LABELS, type GenerateInput, type Ratio } from '@/api/runs'
 import AiBadge from '@/components/ui/AiBadge'
+import { formatResetAt, useEntitlements, useEstimate } from '@/hooks/useQuota'
 
 const RATIOS = Object.keys(RATIO_LABELS) as Ratio[]
 const COUNTS = [1, 2, 4, 6]
@@ -20,8 +21,11 @@ export default function GenerateForm({
   const [count, setCount] = useState(4)
   const [negative, setNegative] = useState('')
   const [advanced, setAdvanced] = useState(false)
+  const entitlements = useEntitlements()
+  const estimate = useEstimate('generate_image', { count })
+  const short = estimate.data ? !estimate.data.affordable : false
 
-  const canSubmit = prompt.trim().length > 0 && !pending
+  const canSubmit = prompt.trim().length > 0 && !pending && !short
 
   return (
     <form
@@ -79,13 +83,24 @@ export default function GenerateForm({
           disabled={!canSubmit}
           className="bg-ink hover:bg-dark rounded-control ml-auto inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white transition-all duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100"
         >
-          {pending ? '提交中…' : '生成'}
+          {short ? '次数不足' : pending ? '提交中…' : '生成'}
           <AiBadge />
         </button>
       </div>
-      <p className="text-faint px-3 pb-2 text-[11px]">
-        {pending ? '任务已提交，稍后会跳到候选页' : '回车生成 · Shift+Enter 换行'}
-      </p>
+
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 pb-2 text-[11px]">
+        <span className="text-faint">
+          {pending ? '任务已提交，稍后会跳到候选页' : '成功生成 1 张消耗 1 次'}
+        </span>
+        <span className={short ? 'text-danger' : 'text-muted'}>
+          预计 {count} 次 · 可用 {entitlements.data?.available ?? '—'} 次
+        </span>
+      </div>
+      {short && (
+        <p className="text-danger px-3 pb-2 text-[11px] leading-relaxed">
+          今日免费次数不足，{formatResetAt(entitlements.data)}后恢复；也可以减少生成数量。
+        </p>
+      )}
 
       {advanced && (
         <div className="border-line animate-fade-in mt-1 border-t px-4 py-3">

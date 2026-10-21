@@ -83,6 +83,7 @@ export function useSessionTools(id: string) {
       sessionsApi.invoke(id, tool, params),
     onSuccess: (body) => {
       cache(body.session)
+      void queryClient.invalidateQueries({ queryKey: ['quota', 'entitlements'] })
       if (!isTerminal(body.run.status)) setPendingRunId(body.run.id)
     },
     onError: (error) => toast(errorMessage(error), 'danger'),
