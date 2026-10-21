@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     s3_endpoint: str = "http://localhost:7313"
     # 浏览器访问地址；空则与 s3_endpoint 相同
     s3_public_endpoint: str = ""
+    # 七牛原生上传地址（如华南 https://upload-z2.qiniup.com）；为空则走 S3 put
+    s3_upload_endpoint: str = ""
     # 公开桶：直接拼固定外链，不再生成会过期的签名 URL
     s3_public_read: bool = False
     # 签名区域与寻址方式：MinIO 用 us-east-1 + path；七牛按空间区域填写
