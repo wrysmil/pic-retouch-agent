@@ -1,8 +1,9 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import CanvasHint from '@/components/editor/CanvasHint'
 import CanvasStage from '@/components/editor/CanvasStage'
+import ChatIcon from '@/components/editor/ChatIcon'
 import CropActions from '@/components/editor/CropActions'
 import EditorToolbar from '@/components/editor/EditorToolbar'
 import ImageWall from '@/components/editor/ImageWall'
@@ -15,24 +16,46 @@ import { useSelection } from '@/hooks/useSelection'
 import { usePatchSession, useSession, useSessionTools } from '@/hooks/useSessions'
 import { ZOOM_STEP, useCanvasView } from '@/stores/canvasView'
 import { useEditorUi } from '@/stores/editorUi'
+import '@/components/editor/editor-chat.css'
 
 // 与 index.css 的 slide-out 时长保持一致
 const PANEL_EXIT_MS = 200
 
 export default function EditorPage() {
   const { sessionId = '' } = useParams()
+  const [mobileView, setMobileView] = useState<'chat' | 'canvas'>('chat')
 
   return (
     // 编辑器自成一屏：不让工具条或画布把外层 main 撑出滚动条，否则画布会被滚出视口
-    <div className="flex h-full overflow-hidden">
-      <SessionSidebar activeId={sessionId} />
-      {sessionId ? (
-        <Workspace sessionId={sessionId} />
-      ) : (
-        <Notice title="选择一个会话" hint="从左侧打开历史对话，或回到创作页开始新的一张。">
-          <CreateLink />
-        </Notice>
-      )}
+    <div className="editor-shell flex h-full overflow-hidden" data-mobile-view={mobileView}>
+      <div className="editor-mobile-tabs" role="group" aria-label="编辑工作区切换">
+        <button
+          aria-pressed={mobileView === 'chat'}
+          aria-controls="editor-conversation"
+          onClick={() => setMobileView('chat')}
+        >
+          <ChatIcon name="spark" />
+          对话
+        </button>
+        <button
+          aria-pressed={mobileView === 'canvas'}
+          aria-controls="editor-canvas"
+          onClick={() => setMobileView('canvas')}
+        >
+          <ChatIcon name="image" />
+          查看画布
+        </button>
+      </div>
+      <SessionSidebar activeId={sessionId} onShowCanvas={() => setMobileView('canvas')} />
+      <div className="editor-main flex min-h-0 min-w-0 flex-1" id="editor-canvas">
+        {sessionId ? (
+          <Workspace sessionId={sessionId} />
+        ) : (
+          <Notice title="选择一个会话" hint="从左侧打开历史对话，或回到创作页开始新的一张。">
+            <CreateLink />
+          </Notice>
+        )}
+      </div>
     </div>
   )
 }

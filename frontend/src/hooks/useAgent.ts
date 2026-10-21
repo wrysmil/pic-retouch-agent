@@ -40,14 +40,23 @@ function useRefreshTurn(sessionId: string) {
 function useTurnStream(sessionId: string, turn: Turn | undefined) {
   const queryClient = useQueryClient()
   const id = turn && LIVE_PHASES.has(turn.phase) ? turn.id : null
-  const afterRef = useRef(turn?.last_event_seq ?? 0)
-  afterRef.current = turn?.last_event_seq ?? afterRef.current
+  const streamKey = turn ? `${sessionId}:${turn.id}` : ''
+  const lastEventSeq = turn?.last_event_seq ?? 0
+  const afterRef = useRef({ key: streamKey, seq: lastEventSeq })
+
+  useEffect(() => {
+    if (!streamKey) return
+    if (afterRef.current.key !== streamKey) {
+      afterRef.current = { key: streamKey, seq: lastEventSeq }
+      return
+    }
+    afterRef.current.seq = Math.max(afterRef.current.seq, lastEventSeq)
+  }, [streamKey, lastEventSeq])
 
   useEffect(() => {
     if (!id) return
-    const source = new EventSource(
-      `/events/agent-runs/${id}?after_seq=${afterRef.current}`,
-    )
+    const afterSeq = afterRef.current.key === streamKey ? afterRef.current.seq : 0
+    const source = new EventSource(`/events/agent-runs/${id}?after_seq=${afterSeq}`)
     let timer: number | undefined
     let closed = false
 
@@ -69,7 +78,11 @@ function useTurnStream(sessionId: string, turn: Turn | undefined) {
       let needsRefresh = false
       const current = data.payload.turn
       if (current) {
-        afterRef.current = Math.max(afterRef.current, current.last_event_seq)
+        if (afterRef.current.key !== streamKey) {
+          afterRef.current = { key: streamKey, seq: current.last_event_seq }
+        } else {
+          afterRef.current.seq = Math.max(afterRef.current.seq, current.last_event_seq)
+        }
         queryClient.setQueryData<Turn[]>(turnsKey(sessionId), (turns) =>
           turns?.map((item) => (item.id === current.id ? current : item)),
         )
@@ -92,11 +105,10 @@ function useTurnStream(sessionId: string, turn: Turn | undefined) {
         )
       }
       if (data.type === 'planning.summary.delta' && typeof data.payload.text === 'string') {
+        const text = data.payload.text
         // 文字流只在前端累加，避免每个 token 都回服务端拉一次
         queryClient.setQueryData<Turn[]>(turnsKey(sessionId), (turns) =>
-          turns?.map((item) =>
-            item.id === id ? { ...item, public_summary: data.payload.text } : item,
-          ),
+          turns?.map((item) => (item.id === id ? { ...item, public_summary: text } : item)),
         )
       }
       if (data.type === 'planning.failed') {
@@ -121,7 +133,7 @@ function useTurnStream(sessionId: string, turn: Turn | undefined) {
       source.close()
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [id, sessionId, queryClient])
+  }, [id, sessionId, queryClient, streamKey])
 }
 
 export function useTurns(sessionId: string) {
@@ -132,7 +144,8 @@ export function useTurns(sessionId: string) {
     // 规划/执行阶段轮询降为兜底，主要靠轮次 SSE 推进
     refetchInterval: (current) => {
       const latest = current.state.data?.at(-1)
-      return latest && OPEN_PHASES.has(latest.phase) ? 1500 : false
+      // SSE 是主通道；快照只负责兜底，避免任务执行时高频重复请求
+      return latest && OPEN_PHASES.has(latest.phase) ? 4000 : false
     },
   })
 
@@ -162,6 +175,7 @@ function requestId() {
 }
 
 export function useSendMessage(sessionId: string) {
+  const queryClient = useQueryClient()
   const refresh = useRefreshTurn(sessionId)
   const refreshQuota = useRefreshQuota()
   // 同一轮提交（含误触的第二次调用）复用同一个请求键，落定后下次发送再换新键
@@ -171,7 +185,12 @@ export function useSendMessage(sessionId: string) {
       pendingId.current ??= requestId()
       return agentApi.send(sessionId, text, pendingId.current)
     },
-    onSuccess: () => {
+    onSuccess: (turn) => {
+      // 先写入新轮次再刷新，避免请求已返回、列表未回填时再次并发发送。
+      queryClient.setQueryData<Turn[]>(turnsKey(sessionId), (turns = []) => [
+        ...turns.filter((item) => item.id !== turn.id),
+        turn,
+      ])
       refresh()
       refreshQuota()
     },
@@ -201,9 +220,22 @@ export function usePlanActions(sessionId: string) {
     onSuccess: after,
   })
   return {
-    confirm: (turnId: string) => confirm.mutate(turnId),
-    cancel: (turnId: string) => cancel.mutate(turnId),
-    retry: (turnId: string) => retry.mutate(turnId),
+    confirm: (turnId: string) => {
+      cancel.reset()
+      retry.reset()
+      confirm.mutate(turnId)
+    },
+    cancel: (turnId: string) => {
+      confirm.reset()
+      retry.reset()
+      cancel.mutate(turnId)
+    },
+    retry: (turnId: string) => {
+      confirm.reset()
+      cancel.reset()
+      retry.mutate(turnId)
+    },
     busy: confirm.isPending || cancel.isPending || retry.isPending,
+    error: confirm.error ?? cancel.error ?? retry.error,
   }
 }

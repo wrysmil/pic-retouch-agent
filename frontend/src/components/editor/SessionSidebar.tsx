@@ -1,103 +1,130 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link, NavLink } from 'react-router-dom'
-
 import AgentConversation from '@/components/editor/AgentConversation'
+import ChatIcon from '@/components/editor/ChatIcon'
 import MessageComposer from '@/components/editor/MessageComposer'
-import Button from '@/components/ui/Button'
-import { buttonClass } from '@/components/ui/buttonStyles'
 import { useSendMessage, useTurns } from '@/hooks/useAgent'
 import { errorMessage } from '@/hooks/useAuth'
-import { useSessions } from '@/hooks/useSessions'
+import { useSession, useSessions } from '@/hooks/useSessions'
+import { hasOpenTurn } from '@/lib/agentPresentation'
 import { formatDateTime } from '@/lib/format'
 
-export default function SessionSidebar({ activeId }: { activeId: string }) {
-  // 历史对话默认收起，尽量把纵向空间留给当前对话
+export default function SessionSidebar({
+  activeId,
+  onShowCanvas,
+}: {
+  activeId: string
+  onShowCanvas: () => void
+}) {
   const [historyOpen, setHistoryOpen] = useState(false)
-
   return (
-    <aside className="border-line bg-paper flex w-72 shrink-0 flex-col border-r">
-      <div className="border-line flex items-center gap-2 border-b p-3">
-        <Link
-          to="/create"
-          className={`${buttonClass({ variant: 'outline' })} flex-1 py-2 text-center text-sm`}
-        >
-          新对话
+    <aside className="session-sidebar" id="editor-conversation" aria-label="AI 修图助手">
+      <header className="chat-sidebar-header">
+        <div className="chat-ai-avatar">
+          <ChatIcon name="spark" />
+        </div>
+        <div>
+          <h1>
+            映造助手 <span>AI</span>
+          </h1>
+          <p>你的想法，我们一起实现。</p>
+        </div>
+        <Link className="chat-header-button" to="/create" aria-label="新对话" title="新对话">
+          <ChatIcon name="plus" />
         </Link>
-        <Button
-          active={historyOpen}
-          className="px-3 py-2"
+        <button
+          className={`chat-header-button ${historyOpen ? 'active' : ''}`}
+          aria-label="历史对话"
+          aria-expanded={historyOpen}
+          aria-controls="chat-history"
+          title="历史对话"
           onClick={() => setHistoryOpen((open) => !open)}
         >
-          历史
-        </Button>
-      </div>
-
-      {historyOpen && <SessionList activeId={activeId} />}
-
+          <ChatIcon name="history" />
+        </button>
+      </header>
+      {historyOpen && <SessionList activeId={activeId} onPick={() => setHistoryOpen(false)} />}
       {activeId ? (
-        <Conversation sessionId={activeId} />
+        <Conversation key={activeId} sessionId={activeId} onShowCanvas={onShowCanvas} />
       ) : (
-        <p className="text-faint min-h-0 flex-1 px-4 py-4 text-xs leading-relaxed">
-          打开一个历史对话，或回到创作页开始新的一张。
-        </p>
+        <p className="chat-state-note">打开一个历史对话，或回到创作页开始新的一张。</p>
       )}
     </aside>
   )
 }
 
-function Conversation({ sessionId }: { sessionId: string }) {
+function Conversation({
+  sessionId,
+  onShowCanvas,
+}: {
+  sessionId: string
+  onShowCanvas: () => void
+}) {
   const send = useSendMessage(sessionId)
-  const { data: turns = [] } = useTurns(sessionId)
-  // 计划跑着的时候再发一条，两条计划会互相踩画布，直接锁住输入框
-  const planActive = turns.some((turn) => turn.status === 'queued' || turn.status === 'running')
-
+  const turns = useTurns(sessionId)
+  const { data: session } = useSession(sessionId)
+  const [draft, setDraft] = useState('')
+  const root = useRef<HTMLDivElement>(null)
+  const planActive = hasOpenTurn(turns.data ?? [])
+  const suggest = (text: string) => {
+    setDraft((previous) =>
+      previous.trim() ? `${previous.trimEnd()}\n${text}`.slice(0, 1000) : text,
+    )
+    requestAnimationFrame(() => root.current?.querySelector('textarea')?.focus())
+  }
   return (
-    <>
-      <AgentConversation sessionId={sessionId} />
-      <MessageComposer
-        pending={send.isPending || planActive}
-        error={send.isError ? errorMessage(send.error) : null}
-        placeholder={
-          planActive
-            ? '当前计划进行中，确认、取消或等它结束后再发'
-            : '说明要怎么改，例如：去背景再水平翻转。回车发送'
-        }
-        onSend={(text) => send.mutate(text)}
+    <div className="chat-session" ref={root}>
+      <AgentConversation
+        sessionId={sessionId}
+        turns={turns.data ?? []}
+        loading={turns.isPending}
+        error={turns.isError ? errorMessage(turns.error) : null}
+        onRetry={() => {
+          void turns.refetch()
+        }}
+        onSuggestion={suggest}
+        onShowCanvas={onShowCanvas}
       />
-    </>
+      <MessageComposer
+        session={session}
+        pending={send.isPending || planActive || turns.isPending || turns.isError}
+        error={send.isError ? errorMessage(send.error) : null}
+        value={draft}
+        onChange={setDraft}
+        onSuggestion={suggest}
+        onSend={(text) => send.mutateAsync(text)}
+      />
+    </div>
   )
 }
 
-function SessionList({ activeId }: { activeId: string }) {
-  const { data: sessions = [], isPending } = useSessions()
-
-  if (isPending) {
-    return <p className="text-faint border-line border-b px-4 py-3 text-xs">加载中…</p>
-  }
-
-  if (sessions.length === 0) {
-    return <p className="text-faint border-line border-b px-4 py-3 text-xs">还没有会话</p>
-  }
-
+function SessionList({ activeId, onPick }: { activeId: string; onPick: () => void }) {
+  const { data: sessions = [], isPending, isError } = useSessions()
   return (
-    <ul className="border-line scrollbar-slim animate-fade-in max-h-52 shrink-0 space-y-0.5 overflow-y-auto border-b p-2">
-      {sessions.map((session) => (
-        <li key={session.id}>
-          <NavLink
-            to={`/editor/${session.id}`}
-            className={`rounded-chip block px-2.5 py-2 transition-colors duration-150 ${
-              session.id === activeId
-                ? 'bg-brand-soft text-brand-strong'
-                : 'text-muted hover:bg-soft hover:text-ink'
-            }`}
-          >
-            <span className="block truncate text-xs font-medium">{session.title}</span>
-            <span className="text-faint block text-[10px] tabular-nums">
-              {formatDateTime(session.updated_at)}
-            </span>
-          </NavLink>
-        </li>
-      ))}
-    </ul>
+    <div className="chat-history scrollbar-slim" id="chat-history">
+      <div className="chat-history-title">最近的对话</div>
+      {isPending ? (
+        <p>加载中…</p>
+      ) : isError ? (
+        <p role="alert">历史对话读取失败，请稍后重试。</p>
+      ) : sessions.length === 0 ? (
+        <p>还没有会话</p>
+      ) : (
+        <ul>
+          {sessions.map((session) => (
+            <li key={session.id}>
+              <NavLink
+                onClick={onPick}
+                to={`/editor/${session.id}`}
+                className={session.id === activeId ? 'active' : ''}
+              >
+                <strong>{session.title}</strong>
+                <small>{formatDateTime(session.updated_at)}</small>
+              </NavLink>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
