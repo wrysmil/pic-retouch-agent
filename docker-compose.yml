@@ -1,4 +1,4 @@
-name: ai-retouch-agent
+name: pic-retouch
 
 services:
   postgres:
