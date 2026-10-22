@@ -18,6 +18,12 @@ class LayerKind(enum.StrEnum):
     SHAPE = "shape"
 
 
+class ShapeKind(enum.StrEnum):
+    RECT = "rect"
+    ELLIPSE = "ellipse"
+    LINE = "line"
+
+
 class Transform(BaseModel):
     """相对画布左上角的位置与形变，缩放为倍率而非像素。"""
 
@@ -44,6 +50,11 @@ class Layer(BaseModel):
     text: str | None = None
     font_size: float = 24
     fill: str = "#141414"
+    # Shape layers share the text fill field; the remaining style fields are
+    # backward-compatible defaults so historical documents still load.
+    shape_type: ShapeKind = ShapeKind.RECT
+    stroke: str = "#141414"
+    stroke_width: float = 2
 
 
 class LayerDocument(BaseModel):

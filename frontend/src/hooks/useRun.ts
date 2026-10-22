@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { isTerminal, runsApi, type GenerateInput, type Run, type RunStatus } from '@/api/runs'
 import { useSmoothedProgress } from '@/hooks/useSmoothedProgress'
+import { recordRateLimit } from '@/stores/rateLimit'
 
 type Progress = Pick<Run, 'id' | 'tool' | 'status' | 'progress' | 'stage' | 'error' | 'result'>
 
@@ -16,6 +17,7 @@ export function useGenerate() {
       // 提交时已预占，先刷新一次；结算后 SSE 终态会再刷新一次
       void queryClient.invalidateQueries({ queryKey: ['quota', 'entitlements'] })
     },
+    onError: (error) => recordRateLimit('generate', error),
   })
 }
 

@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 
 import BrandMark from '@/components/BrandMark'
 import { errorMessage, useAuthActions, useCurrentUser } from '@/hooks/useAuth'
+import { useRateLimit } from '@/stores/rateLimit'
 
 type Mode = 'login' | 'register'
 type Rules = { minLength?: number; maxLength?: number; pattern?: string; title?: string }
@@ -40,6 +41,7 @@ export default function AuthPage() {
   const { user, isLoading } = useCurrentUser()
   const { login, register } = useAuthActions()
   const action = mode === 'login' ? login : register
+  const rateLimitSeconds = useRateLimit(mode)
 
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -116,14 +118,23 @@ export default function AuthPage() {
                 rules={RULES[mode].password}
               />
 
-              {action.isError && <p className="text-danger text-sm">{errorMessage(action.error)}</p>}
+              {action.isError && (
+                <p className="text-danger text-sm">
+                  {errorMessage(action.error)}
+                  {rateLimitSeconds > 0 ? ` · ${rateLimitSeconds} 秒后可重试` : ''}
+                </p>
+              )}
 
               <button
                 type="submit"
-                disabled={action.isPending}
+                disabled={action.isPending || rateLimitSeconds > 0}
                 className="bg-ink hover:bg-dark rounded-control mt-1 w-full py-3 text-sm font-medium text-white transition-colors disabled:opacity-50"
               >
-                {action.isPending ? '处理中…' : copy.submit}
+                {action.isPending
+                  ? '处理中…'
+                  : rateLimitSeconds > 0
+                    ? `${rateLimitSeconds} 秒后可重试`
+                    : copy.submit}
               </button>
             </form>
 

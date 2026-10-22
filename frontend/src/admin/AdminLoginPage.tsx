@@ -4,6 +4,7 @@ import { Navigate, useNavigate } from 'react-router-dom'
 import { errorMessage } from '@/hooks/useAuth'
 import { useAdminAuthActions, useCurrentAdmin } from '@/hooks/useAdminAuth'
 import { Alert, Button, Field, inputCls } from '@/components/admin/ui'
+import { useRateLimit } from '@/stores/rateLimit'
 import { WORKBENCH_URL } from './config'
 import Splash from './Splash'
 
@@ -11,6 +12,7 @@ import Splash from './Splash'
 export default function AdminLoginPage() {
   const { user, isLoading } = useCurrentAdmin()
   const { login } = useAdminAuthActions()
+  const rateLimitSeconds = useRateLimit('admin-login')
   const navigate = useNavigate()
 
   const [username, setUsername] = useState('')
@@ -78,16 +80,23 @@ export default function AdminLoginPage() {
               />
             </Field>
 
-            {error ? <Alert tone="err">{error}</Alert> : null}
+            {error || rateLimitSeconds > 0 ? (
+              <Alert tone="err">
+                {error}
+                {rateLimitSeconds > 0
+                  ? `${error ? ' · ' : ''}${rateLimitSeconds} 秒后可重试`
+                  : ''}
+              </Alert>
+            ) : null}
 
             <Button
               type="submit"
               variant="primary"
               className="w-full"
               loading={login.isPending}
-              disabled={!username || !password}
+              disabled={!username || !password || rateLimitSeconds > 0}
             >
-              登录
+              {rateLimitSeconds > 0 ? String(rateLimitSeconds) + ' 秒后可重试' : '登录'}
             </Button>
           </div>
 

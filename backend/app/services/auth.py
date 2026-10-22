@@ -15,6 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import User
 from app.security import hash_password, verify_password
 
+# A fixed bcrypt hash makes the nonexistent-user path perform the same expensive
+# password check as a real account without leaking account existence by timing.
+_DUMMY_PASSWORD_HASH = (
+    "$2b$12$KOpl2D4944AbJ/syiMpeOOfdMy2Y/QgT989pqEI4PSrzIuHxXGcZC"
+)
+
 
 class UsernameTaken(Exception):
     """用户名已被占用"""
@@ -70,7 +76,10 @@ async def authenticate(session: AsyncSession, username: str, password: str) -> U
     - **抛出**: InvalidCredentials 用户名或密码错误；AccountDisabled 账号已停用
     """
     user = await session.scalar(select(User).where(User.username == username))
-    if user is None or not verify_password(password, user.password_hash):
+    if user is None:
+        verify_password(password, _DUMMY_PASSWORD_HASH)
+        raise InvalidCredentials
+    if not verify_password(password, user.password_hash):
         raise InvalidCredentials
     if not user.is_active:
         # 区分禁用与密码错：禁用是预期内状态，对外报"账号已停用"更友好

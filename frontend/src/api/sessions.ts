@@ -27,6 +27,9 @@ export type Layer = {
   text?: string | null
   font_size?: number
   fill?: string
+  shape_type?: 'rect' | 'ellipse' | 'line'
+  stroke?: string
+  stroke_width?: number
 }
 
 export type LayerDocument = {
@@ -98,6 +101,7 @@ export const ACTION_LABELS: Record<string, string> = {
   scale_layer: '缩放',
   rotate_layer: '旋转',
   move_layer: '移动',
+  delete_layer: '删除图层',
   split_layers: '拆层',
   promote_object_to_layer: '提升为图层',
   generate_marketing: '营销图',

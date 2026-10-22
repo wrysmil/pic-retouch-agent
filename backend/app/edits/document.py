@@ -19,6 +19,18 @@ def flip(document: LayerDocument, layer_id: str | None, direction: str) -> Layer
     return doc
 
 
+def remove(document: LayerDocument, layer_id: str | None) -> LayerDocument:
+    """Remove one layer from the document without touching its asset record."""
+    if not layer_id:
+        raise EditError("请先选择要删除的图层")
+    doc = document.model_copy(deep=True)
+    layer = resolve_layer(doc, layer_id)
+    if layer.locked:
+        raise EditError("该图层已锁定，不能删除")
+    doc.layers.remove(layer)
+    return doc
+
+
 def set_opacity(document: LayerDocument, layer_id: str | None, opacity: float) -> LayerDocument:
     doc = document.model_copy(deep=True)
     resolve_layer(doc, layer_id).opacity = opacity

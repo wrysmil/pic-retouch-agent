@@ -4,6 +4,7 @@ from app.tools.base import ToolSpec, UnknownTool
 from app.tools.batch import BATCH_PROCESS
 from app.tools.canvas import (
     CROP_CANVAS,
+    DELETE_LAYER,
     FLIP_LAYER,
     MOVE_LAYER,
     REORDER_LAYER,
@@ -35,6 +36,7 @@ SPECS: tuple[ToolSpec, ...] = (
     PREPARE_DELIVERY_SIZES,
     BATCH_PROCESS,
     CROP_CANVAS,
+    DELETE_LAYER,
     FLIP_LAYER,
     SET_LAYER_OPACITY,
     SET_LAYER_VISIBLE,

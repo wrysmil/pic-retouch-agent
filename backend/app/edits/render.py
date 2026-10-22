@@ -40,6 +40,9 @@ def flatten(
             if include_text:
                 _composite_text(canvas, layer)
             continue
+        if layer.kind is LayerKind.SHAPE:
+            _composite_shape(canvas, layer)
+            continue
         if layer.kind is not LayerKind.IMAGE or layer.asset_id is None:
             continue
         raw = images.get(layer.asset_id)
@@ -72,6 +75,22 @@ def _composite_text(canvas: Image.Image, layer: Layer) -> None:
     draw.text((x, y), content, font=font, fill=color)
     _place(canvas, layer, source)
 
+
+def _composite_shape(canvas: Image.Image, layer: Layer) -> None:
+    width = max(1, layer.width)
+    height = max(1, layer.height)
+    source = Image.new("RGBA", (width, height), TRANSPARENT)
+    draw = ImageDraw.Draw(source)
+    fill = _rgba(layer.fill)
+    stroke = _rgba(layer.stroke)
+    stroke_width = max(0, int(round(layer.stroke_width)))
+    if layer.shape_type.value == "ellipse":
+        draw.ellipse((0, 0, width - 1, height - 1), fill=fill, outline=stroke, width=stroke_width)
+    elif layer.shape_type.value == "line":
+        draw.line((0, 0, width - 1, height - 1), fill=stroke, width=max(1, stroke_width))
+    else:
+        draw.rectangle((0, 0, width - 1, height - 1), fill=fill, outline=stroke, width=stroke_width)
+    _place(canvas, layer, source)
 
 def _place(canvas: Image.Image, layer: Layer, source: Image.Image) -> None:
     transform = layer.transform

@@ -1,20 +1,21 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import CanvasHint from '@/components/editor/CanvasHint'
 import CanvasStage from '@/components/editor/CanvasStage'
 import ChatIcon from '@/components/editor/ChatIcon'
 import CropActions from '@/components/editor/CropActions'
+import EditorRulers from '@/components/editor/EditorRulers'
 import EditorToolbar from '@/components/editor/EditorToolbar'
 import ImageWall from '@/components/editor/ImageWall'
 import LayerPanel from '@/components/editor/LayerPanel'
 import SessionSidebar from '@/components/editor/SessionSidebar'
 import ProgressBar from '@/components/ui/ProgressBar'
 import { buttonClass } from '@/components/ui/buttonStyles'
+import { useEditorShortcuts } from '@/hooks/useEditorShortcuts'
 import { useMountTransition } from '@/hooks/useMountTransition'
 import { useSelection } from '@/hooks/useSelection'
 import { usePatchSession, useSession, useSessionTools } from '@/hooks/useSessions'
-import { ZOOM_STEP, useCanvasView } from '@/stores/canvasView'
 import { useEditorUi } from '@/stores/editorUi'
 import '@/components/editor/editor-chat.css'
 
@@ -70,84 +71,15 @@ function Workspace({ sessionId }: { sessionId: string }) {
   const compareOpen = useEditorUi((state) => state.compareOpen)
   const panel = useEditorUi((state) => state.panel)
   const selectMode = useEditorUi((state) => state.selectMode)
-  const closeCrop = useEditorUi((state) => state.closeCrop)
-  const setCompareOpen = useEditorUi((state) => state.setCompareOpen)
-  const setSelectMode = useEditorUi((state) => state.setSelectMode)
-  const setPanel = useEditorUi((state) => state.setPanel)
+  const guidesEnabled = useEditorUi((state) => state.guidesEnabled)
   const heldPanel = useMountTransition(panel, PANEL_EXIT_MS)
-
-  const fit = useCanvasView((state) => state.fit)
-  const stepZoom = useCanvasView((state) => state.stepZoom)
-  const zoomTo = useCanvasView((state) => state.zoomTo)
 
   const urls = useMemo(
     () => new Map((session?.assets ?? []).map((asset) => [asset.id, asset.url])),
     [session?.assets],
   )
 
-  useEffect(() => {
-    if (!session) return
-    const onKey = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
-        return
-      }
-      // Esc 一次只收一层，先退临时模式，都退完了才关右侧面板
-      if (event.key === 'Escape') {
-        if (cropOpen) closeCrop()
-        else if (compareOpen) setCompareOpen(false)
-        else if (selectMode) setSelectMode(null)
-        else if (panel) setPanel(null)
-        return
-      }
-
-      const meta = event.metaKey || event.ctrlKey
-      if (meta && event.key.toLowerCase() === 'z') {
-        event.preventDefault()
-        // 按住不放会连着触发 keydown，repeat 时不再发撤销
-        if (event.repeat || tools.busy || picking.busy) return
-        if (event.shiftKey) {
-          if (picking.canRedo) picking.redo()
-          else if (session.can_redo) tools.redo()
-        } else if (picking.canUndo) {
-          picking.undo()
-        } else if (session.can_undo) {
-          tools.undo()
-        }
-        return
-      }
-      if (meta && event.key.toLowerCase() === 'y') {
-        event.preventDefault()
-        if (event.repeat || tools.busy || picking.busy) return
-        if (picking.canRedo) picking.redo()
-        else if (session.can_redo) tools.redo()
-        return
-      }
-
-      // 视图快捷键不带修饰键，避开浏览器自身的缩放
-      if (meta || event.shiftKey || event.altKey) return
-      if (event.key === '0') fit(session.document)
-      else if (event.key === '1') zoomTo(1)
-      else if (event.key === '=' || event.key === '+') stepZoom(ZOOM_STEP)
-      else if (event.key === '-') stepZoom(1 / ZOOM_STEP)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [
-    session,
-    tools,
-    picking,
-    cropOpen,
-    compareOpen,
-    selectMode,
-    panel,
-    closeCrop,
-    setCompareOpen,
-    setSelectMode,
-    setPanel,
-    fit,
-    stepZoom,
-    zoomTo,
-  ])
+  useEditorShortcuts({ session: session ?? null, tools, picking })
 
   if (!session) {
     return isError ? (
@@ -175,6 +107,11 @@ function Workspace({ sessionId }: { sessionId: string }) {
         <div className="relative flex min-h-0 min-w-0 flex-1">
           <div className="@container relative flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="relative min-h-0 flex-1">
+              <EditorRulers
+                sessionId={session.id}
+                document={session.document}
+                enabled={guidesEnabled}
+              />
               <CanvasStage
                 document={session.document}
                 previous={session.previous_document}

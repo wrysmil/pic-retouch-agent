@@ -27,6 +27,7 @@ import {
 import { formatDateTime } from '@/lib/format'
 import { isAiGeneration } from '@/lib/tools'
 import { toast } from '@/stores/toasts'
+import { useRateLimit } from '@/stores/rateLimit'
 
 const MAX_IMAGES = 20
 
@@ -38,6 +39,7 @@ export default function BatchPage() {
 function Compose() {
   const navigate = useNavigate()
   const create = useCreateBatch()
+  const batchRateLimit = useRateLimit('batch')
   const upload = useUploadAsset()
   const { data: groups = [] } = useAssetLibrary()
   const { data: history = [] } = useBatches()
@@ -64,7 +66,7 @@ function Compose() {
     )
 
   const start = () => {
-    if (blocked || short) return
+    if (blocked || short || batchRateLimit > 0) return
     create.mutate(
       {
         asset_ids: assets.map((asset) => asset.id),
@@ -141,11 +143,17 @@ function Compose() {
       <div className="mt-8 flex items-center gap-3">
         <button
           type="button"
-          disabled={Boolean(blocked) || short || create.isPending}
+          disabled={Boolean(blocked) || short || create.isPending || batchRateLimit > 0}
           onClick={start}
           className="bg-ink hover:bg-dark rounded-control inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
         >
-          {short ? '次数不足' : create.isPending ? '提交中…' : '开始处理'}
+          {short
+            ? '次数不足'
+            : batchRateLimit > 0
+              ? `${batchRateLimit} 秒后可重试`
+              : create.isPending
+                ? '提交中…'
+                : '开始处理'}
           {draft.selected.some(isAiGeneration) && <AiBadge />}
         </button>
         {blocked && <p className="text-faint text-xs">{blocked}</p>}

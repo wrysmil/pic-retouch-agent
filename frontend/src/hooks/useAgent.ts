@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { agentApi, type DraftStep, type Turn } from '@/api/agent'
 import { isTerminal } from '@/api/runs'
 import { useRefreshQuota } from '@/hooks/useQuota'
+import { recordRateLimit } from '@/stores/rateLimit'
 
 const turnsKey = (sessionId: string) => ['session', sessionId, 'messages']
 
@@ -194,6 +195,7 @@ export function useSendMessage(sessionId: string) {
       refresh()
       refreshQuota()
     },
+    onError: (error) => recordRateLimit('agent-plan', error),
     onSettled: () => {
       pendingId.current = null
     },

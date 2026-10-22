@@ -48,22 +48,33 @@ export default function EditorToolbar({
       </span>
 
       <div className="ml-1 flex shrink-0 items-center gap-1">
+        <Button
+          active={ui.activeTool === 'move' && !ui.cropOpen}
+          disabled={tools.busy}
+          title="移动工具 V"
+          onClick={() => ui.setActiveTool('move')}
+        >
+          移动
+        </Button>
+        <Button
+          active={ui.activeTool === 'select'}
+          disabled={tools.busy}
+          title="点选工具"
+          onClick={() => ui.setActiveTool('select')}
+        >
+          点选
+        </Button>
+        <Button
+          active={ui.activeTool === 'brush'}
+          disabled={tools.busy}
+          title="笔刷工具 B"
+          onClick={() => ui.setActiveTool('brush')}
+        >
+          笔刷
+        </Button>
+        <span className="bg-line mx-1 h-4 w-px" aria-hidden />
         {ui.selectMode ? (
           <>
-            <Button
-              active={ui.selectMode === 'point'}
-              title="点击物体生成选区"
-              onClick={() => ui.setSelectMode(ui.selectMode === 'point' ? null : 'point')}
-            >
-              点选
-            </Button>
-            <Button
-              active={ui.selectMode === 'brush'}
-              title="涂抹出选区"
-              onClick={() => ui.setSelectMode(ui.selectMode === 'brush' ? null : 'brush')}
-            >
-              笔刷
-            </Button>
             <Button
               ai
               disabled={tools.busy || picking.busy || !picking.selection}
@@ -217,25 +228,30 @@ export default function EditorToolbar({
             >
               拆层
             </Button>
-            <Button
-              disabled={tools.busy}
-              title="点选物体建立选区"
-              onClick={() => ui.setSelectMode('point')}
-            >
-              点选
-            </Button>
-            <Button
-              disabled={tools.busy}
-              title="涂抹建立选区"
-              onClick={() => ui.setSelectMode('brush')}
-            >
-              笔刷
-            </Button>
           </>
         )}
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-1">
+        <Button
+          active={ui.guidesEnabled}
+          title="显示标尺和参考线"
+          onClick={() => ui.setGuidesEnabled(!ui.guidesEnabled)}
+        >
+          参考线
+        </Button>
+        <Button
+          active={ui.snapEnabled}
+          title="拖动图层时吸附画布、参考线和其他图层"
+          onClick={() => ui.setSnapEnabled(!ui.snapEnabled)}
+        >
+          吸附
+        </Button>
+        {ui.guides.length > 0 && (
+          <Button title="清除全部参考线" onClick={ui.clearGuides}>
+            清线
+          </Button>
+        )}
         <Button
           disabled={tools.busy || picking.busy || !(picking.canUndo || session.can_undo)}
           title={

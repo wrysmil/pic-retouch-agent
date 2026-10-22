@@ -7,12 +7,13 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
 from app.db import SessionDep
 from app.deps import CurrentUser
 from app.models.asset import AssetKind, AssetSource
 from app.schemas.asset import AssetOut, LibraryGroupOut
+from app.security.rate_limit import upload_rate_limit
 from app.services import assets as asset_service
 from app.services.assets import ORPHAN_TITLE
 from app.services.images import MAX_FILE_BYTES, ImageRejected, probe_async
@@ -36,6 +37,7 @@ async def _read_limited(file: UploadFile) -> bytes:
 
 @router.post(
     "",
+    dependencies=[Depends(upload_rate_limit)],
     status_code=status.HTTP_201_CREATED,
     summary="上传素材",
     description="上传图片文件作为素材，支持 PNG/JPG/WebP，单文件不超过 20MB。",

@@ -8,6 +8,7 @@ import { errorMessage } from '@/hooks/useAuth'
 import { useSession, useSessions } from '@/hooks/useSessions'
 import { hasOpenTurn } from '@/lib/agentPresentation'
 import { formatDateTime } from '@/lib/format'
+import { useRateLimit } from '@/stores/rateLimit'
 
 export default function SessionSidebar({
   activeId,
@@ -62,6 +63,7 @@ function Conversation({
 }) {
   const send = useSendMessage(sessionId)
   const turns = useTurns(sessionId)
+  const rateLimitSeconds = useRateLimit('agent-plan')
   const { data: session } = useSession(sessionId)
   const [draft, setDraft] = useState('')
   const root = useRef<HTMLDivElement>(null)
@@ -87,8 +89,16 @@ function Conversation({
       />
       <MessageComposer
         session={session}
-        pending={send.isPending || planActive || turns.isPending || turns.isError}
-        error={send.isError ? errorMessage(send.error) : null}
+        pending={
+          send.isPending || planActive || turns.isPending || turns.isError || rateLimitSeconds > 0
+        }
+        error={
+          send.isError
+            ? `${errorMessage(send.error)}${
+                rateLimitSeconds > 0 ? ` · ${rateLimitSeconds} 秒后可重试` : ''
+              }`
+            : null
+        }
         value={draft}
         onChange={setDraft}
         onSuggestion={suggest}

@@ -5,11 +5,12 @@ SSE 事件推送相关接口。
 """
 
 import asyncio
+import contextlib
 import json
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Header, HTTPException, Query, Response, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 
 from app import events
@@ -17,11 +18,41 @@ from app.db import SessionDep
 from app.deps import CurrentUser
 from app.models import AgentRun
 from app.models.tool_run import RunStatus
+from app.security.rate_limit import acquire_sse_slot
+from app.security.rate_limit.limiter import SSELease
 from app.services import runs, sessions, turn_events
 from app.services.runs import RunNotFound
 from app.services.sessions import SessionNotFound
 
 router = APIRouter(prefix="/events", tags=["events"])
+
+# 空闲连接也要续租，否则超过 slot TTL 后会被当成已断开而让出并发名额。
+_SSE_HEARTBEAT_SECONDS = 30
+
+
+def _with_sse_slot(response: StreamingResponse, slot: SSELease | None) -> StreamingResponse:
+    """Keep a concurrent SSE slot alive for the whole response body."""
+    if slot is None:
+        return response
+
+    async def heartbeat() -> None:
+        while True:
+            await asyncio.sleep(_SSE_HEARTBEAT_SECONDS)
+            await slot.touch()
+
+    async def body() -> AsyncIterator[str]:
+        beat = asyncio.create_task(heartbeat())
+        try:
+            async for chunk in response.body_iterator:
+                yield chunk
+        finally:
+            beat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await beat
+            await slot.release()
+
+    return StreamingResponse(body(), media_type=response.media_type, headers=dict(response.headers))
+
 
 _HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
@@ -58,6 +89,7 @@ def _envelope(turn: AgentRun, type_: str, payload: dict) -> dict:
 )
 async def stream_run(
     run_id: uuid.UUID,
+    request: Request,
     user: CurrentUser,
     session: SessionDep,
 ) -> Response:
@@ -97,7 +129,7 @@ async def stream_run(
 
         数据流：
         ┌─────────┐    publish    ┌─────────┐    get_message    ┌─────────┐    yield    ┌─────────┐
-        │ Worker  │ ───────────→  │  Redis  │ ───────────────→  │  SSE端点 │ ─────────→  │  浏览器  │
+        │ Worker  │ ─────────→  │ Redis │ ─────────→  │ SSE端点 │ ───────→  │ 浏览器 │
         │ (发布者) │               │ (通道)  │                  │ (转发器) │             │ (前端)  │
         └─────────┘               └─────────┘                  └─────────┘             └─────────┘
         """
@@ -137,7 +169,10 @@ async def stream_run(
                 if RunStatus(payload["status"]).is_terminal:
                     return
 
-    return StreamingResponse(stream(), media_type="text/event-stream", headers=_HEADERS)
+    slot = await acquire_sse_slot(request)
+    return _with_sse_slot(
+        StreamingResponse(stream(), media_type="text/event-stream", headers=_HEADERS), slot
+    )
 
 
 @router.get(
@@ -148,6 +183,7 @@ async def stream_run(
 )
 async def stream_turn(
     turn_id: uuid.UUID,
+    request: Request,
     user: CurrentUser,
     session: SessionDep,
     after_seq: int = Query(default=0, ge=0),
@@ -208,4 +244,7 @@ async def stream_turn(
                 }:
                     return
 
-    return StreamingResponse(stream(), media_type="text/event-stream", headers=_HEADERS)
+    slot = await acquire_sse_slot(request)
+    return _with_sse_slot(
+        StreamingResponse(stream(), media_type="text/event-stream", headers=_HEADERS), slot
+    )

@@ -1045,3 +1045,9 @@
     transition: none !important;
   }
 }
+/* 标尺只帮助桌面精确摆放；小屏空间优先留给画布。 */
+@media (max-width: 768px) {
+  .editor-rulers {
+    display: none;
+  }
+}

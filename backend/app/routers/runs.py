@@ -10,7 +10,7 @@ tools.submit 校验并入队 → worker 执行统一外壳（tools.execute）→
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import SessionDep
@@ -19,6 +19,7 @@ from app.models.tool_run import ToolRun
 from app.routers.quota import quota_http_error
 from app.schemas.asset import AssetOut
 from app.schemas.run import GenerateIn, RunOut
+from app.security.rate_limit import rate_limit
 from app.services import assets as asset_service
 from app.services import quota, runs, tools
 from app.services.runs import RunNotFound
@@ -39,6 +40,7 @@ async def _candidates(session: AsyncSession, run: ToolRun) -> list[AssetOut]:
 
 @router.post(
     "/generations",
+    dependencies=[Depends(rate_limit("ai-generate"))],
     status_code=status.HTTP_202_ACCEPTED,
     summary="创建生成任务",
     description="提交文生图任务，异步执行后通过 SSE 推送进度。",

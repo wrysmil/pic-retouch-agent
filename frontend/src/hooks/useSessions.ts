@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
+import { rateLimitSeconds } from '@/api/client'
 import { isTerminal } from '@/api/runs'
 import {
   sessionsApi,
@@ -11,6 +12,7 @@ import {
 import { errorMessage } from '@/hooks/useAuth'
 import { useRun } from '@/hooks/useRun'
 import { offersUndo, toolLabel } from '@/lib/tools'
+import { recordRateLimit } from '@/stores/rateLimit'
 import { toast } from '@/stores/toasts'
 
 const LIST_KEY = ['sessions']
@@ -86,7 +88,11 @@ export function useSessionTools(id: string) {
       void queryClient.invalidateQueries({ queryKey: ['quota', 'entitlements'] })
       if (!isTerminal(body.run.status)) setPendingRunId(body.run.id)
     },
-    onError: (error) => toast(errorMessage(error), 'danger'),
+    onError: (error) => {
+      recordRateLimit('editor-write', error)
+      const seconds = rateLimitSeconds(error)
+      toast(`${errorMessage(error)}${seconds > 0 ? `（${seconds} 秒后可重试）` : ''}`, 'danger')
+    },
   })
 
   // 撤销是链式的，上一次没落定就再点一次会连着回退好几步

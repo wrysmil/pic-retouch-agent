@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import type { Asset } from '@/api/assets'
 import { ACTION_LABELS, type Layer, type SessionDetail } from '@/api/sessions'
 import { BackgroundForm, ExpandForm, ReplaceForm } from '@/components/editor/GenerateEdits'
+import LayerThumb from '@/components/editor/LayerThumb'
 import Button from '@/components/ui/Button'
+import { useLayerThumbnails } from '@/hooks/useLayerThumbnails'
 import { useSessionHistory, type SessionTools } from '@/hooks/useSessions'
 import { formatBytes, formatDateTime } from '@/lib/format'
 import { wallOnly } from '@/lib/layers'
@@ -47,10 +49,13 @@ export default function LayerPanel({
   const selection = useEditorUi((state) => state.selection)
   const includeText = useEditorUi((state) => state.splitIncludeText)
   const setIncludeText = useEditorUi((state) => state.setSplitIncludeText)
-  const selected =
-    session.document.layers.find((layer) => layer.id === selectedLayerId) ??
-    session.document.layers.at(-1)
+  const selected = session.document.layers.find((layer) => layer.id === selectedLayerId) ?? null
   const onlyToWall = wallOnly(session.document)
+  const urls = useMemo(
+    () => new Map(session.assets.map((asset) => [asset.id, asset.url])),
+    [session.assets],
+  )
+  const thumbs = useLayerThumbnails(session.document.layers, urls)
 
   return (
     <aside className="border-line bg-paper scrollbar-slim h-full w-72 shrink-0 overflow-y-auto border-l">
@@ -136,12 +141,9 @@ export default function LayerPanel({
               layer={layer}
               active={selected?.id === layer.id}
               disabled={tools.busy}
-              thumb={
-                layer.asset_id
-                  ? session.assets.find((asset) => asset.id === layer.asset_id)
-                  : undefined
-              }
+              thumbSrc={thumbs[layer.id]}
               onSelect={() => selectLayer(layer.id)}
+              onDelete={() => tools.invoke('delete_layer', { layer_id: layer.id })}
               onToggleVisible={() =>
                 tools.invoke('set_layer_visible', { layer_id: layer.id, visible: !layer.visible })
               }
@@ -222,15 +224,17 @@ function LayerRow({
   layer,
   active,
   disabled,
-  thumb,
+  thumbSrc,
   onSelect,
+  onDelete,
   onToggleVisible,
 }: {
   layer: Layer
   active: boolean
   disabled: boolean
-  thumb?: Asset
+  thumbSrc?: string
   onSelect: () => void
+  onDelete: () => void
   onToggleVisible: () => void
 }) {
   return (
@@ -245,24 +249,34 @@ function LayerRow({
         className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
       >
         <span className="bg-canvas border-line rounded-chip size-8 shrink-0 overflow-hidden border">
-          {thumb ? (
-            <img src={thumb.url} alt="" className="size-full object-cover" />
-          ) : (
-            <span className="text-faint grid size-full place-items-center text-[10px]">
-              {layer.kind === 'text' ? '文' : ''}
-            </span>
-          )}
+          <LayerThumb layer={layer} src={thumbSrc} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="text-ink block truncate text-xs font-medium">{layer.name}</span>
           <span className="text-faint block truncate text-[10px]">
-            {layer.kind === 'text' ? layer.text || '文字' : layer.locked ? '已锁定' : '图像'}
+            {layer.kind === 'text'
+              ? layer.text || '文字'
+              : layer.locked
+                ? '已锁定'
+                : layer.kind === 'shape'
+                  ? '形状'
+                  : '图像'}
           </span>
         </span>
         <span className="text-faint shrink-0 text-[10px] tabular-nums">
           {Math.round(layer.opacity * 100)}%
         </span>
       </button>
+      <Button
+        variant="icon"
+        size="sm"
+        disabled={disabled || layer.locked}
+        title={layer.locked ? '已锁定' : '删除图层，可撤销'}
+        onClick={onDelete}
+        className="shrink-0"
+      >
+        删
+      </Button>
       <Button
         variant="icon"
         size="sm"

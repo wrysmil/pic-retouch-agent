@@ -8,12 +8,14 @@ import { useAssetLibrary, useUploadAsset } from '@/hooks/useAssets'
 import { useGenerate } from '@/hooks/useRun'
 import { useCreateSession } from '@/hooks/useSessions'
 import { readPromptDraft, savePromptDraft } from '@/lib/promptDraft'
+import { useRateLimit } from '@/stores/rateLimit'
 
 export default function CreatePage() {
   const navigate = useNavigate()
   const { data: groups = [], isPending } = useAssetLibrary()
   const upload = useUploadAsset()
   const generate = useGenerate()
+  const generateRateLimit = useRateLimit('generate')
   const createSession = useCreateSession()
 
   const openEditor = (assetId: string) =>
@@ -47,6 +49,7 @@ export default function CreatePage() {
       <GenerateForm
         defaultPrompt={readPromptDraft()}
         pending={generate.isPending}
+        rateLimitedSeconds={generateRateLimit}
         onSubmit={(input) =>
           generate.mutate(input, {
             onSuccess: (run) => {

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { adminAuthApi } from '@/api/adminAuth'
 import type { Credentials, User } from '@/api/auth'
+import { recordRateLimit } from '@/stores/rateLimit'
 
 const ADMIN_ME_KEY = ['admin-auth', 'me']
 
@@ -21,6 +22,7 @@ export function useAdminAuthActions() {
   const login = useMutation({
     mutationFn: (body: Credentials) => adminAuthApi.login(body),
     onSuccess: (user: User) => queryClient.setQueryData(ADMIN_ME_KEY, user),
+    onError: (error) => recordRateLimit('admin-login', error),
   })
   const logout = useMutation({
     mutationFn: () => adminAuthApi.logout(),

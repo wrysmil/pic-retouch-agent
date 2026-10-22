@@ -7,13 +7,15 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.db import SessionDep
 from app.deps import CurrentUser
 from app.models import Asset, EditSession, User
+from app.routers.quota import quota_http_error
 from app.schemas.agent import MessageIn, TurnOut
 from app.schemas.asset import AssetOut
 from app.schemas.export import ExportIn
@@ -29,8 +31,7 @@ from app.schemas.session import (
     ToolInvokeIn,
     ToolInvokeOut,
 )
-from app.config import get_settings
-from app.routers.quota import quota_http_error
+from app.security.rate_limit import rate_limit
 from app.services import agent as agent_service
 from app.services import assets as asset_service
 from app.services import exports, quota, selections, sessions, tools
@@ -301,6 +302,7 @@ async def delete_selection(
 
 @router.post(
     "/{session_id}/tools",
+    dependencies=[Depends(rate_limit("editor-write"))],
     status_code=status.HTTP_202_ACCEPTED,
     summary="调用修图工具",
     description="在会话内直接调用一个已注册工具。画布工具当场执行，像素工具入队异步执行。",
@@ -458,6 +460,7 @@ async def list_messages(
 
 @router.post(
     "/{session_id}/messages",
+    dependencies=[Depends(rate_limit("agent-plan"))],
     status_code=status.HTTP_201_CREATED,
     summary="发送修图指令",
     description="先创建轮次并立即返回；默认由后台规划，规划过程通过轮次 SSE 推送。",

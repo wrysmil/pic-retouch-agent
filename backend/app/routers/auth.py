@@ -4,7 +4,7 @@
 提供用户注册、登录、登出和获取当前用户信息的功能。
 """
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.config import get_settings
 from app.db import SessionDep
@@ -12,6 +12,7 @@ from app.deps import CurrentAdminSession, CurrentUser
 from app.models import User
 from app.schemas.auth import Credentials, UserOut
 from app.security import ADMIN_SESSION_COOKIE, SESSION_COOKIE, issue_token
+from app.security.rate_limit import auth_failures, rate_limit
 from app.services import auth as auth_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -37,6 +38,7 @@ def _start_session(response: Response, user: User, cookie_name: str = SESSION_CO
     status_code=status.HTTP_201_CREATED,
     summary="用户注册",
     description="创建新用户账号，注册成功后自动登录。",
+    dependencies=[Depends(rate_limit("auth-register"))],
 )
 async def register(
     credentials: Credentials,
@@ -64,8 +66,10 @@ async def register(
     "/login",
     summary="用户登录",
     description="使用用户名密码登录，登录成功后设置会话 Cookie。",
+    dependencies=[Depends(rate_limit("auth-login"))],
 )
 async def login(
+    request: Request,
     credentials: Credentials,
     response: Response,
     session: SessionDep,
@@ -81,12 +85,16 @@ async def login(
     - 401: 用户名或密码错误
     - 403: 账号已被停用
     """
+    await auth_failures.assert_login_allowed(request, credentials.username)
     try:
         user = await auth_service.authenticate(session, credentials.username, credentials.password)
     except auth_service.AccountDisabled:
+        await auth_failures.record_login_failure(request, credentials.username)
         raise HTTPException(status.HTTP_403_FORBIDDEN, "账号已停用，请联系管理员") from None
     except auth_service.InvalidCredentials:
+        await auth_failures.record_login_failure(request, credentials.username)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户名或密码错误") from None
+    await auth_failures.clear_login_failures(credentials.username)
     return _start_session(response, user)
 
 
@@ -94,20 +102,27 @@ async def login(
     "/admin/login",
     summary="管理员登录",
     description="登录管理后台，使用独立 Cookie，不改变工作台会话。",
+    dependencies=[Depends(rate_limit("admin-login"))],
 )
 async def admin_login(
+    request: Request,
     credentials: Credentials,
     response: Response,
     session: SessionDep,
 ) -> UserOut:
+    await auth_failures.assert_login_allowed(request, credentials.username, admin=True)
     try:
         user = await auth_service.authenticate(session, credentials.username, credentials.password)
     except auth_service.AccountDisabled:
+        await auth_failures.record_login_failure(request, credentials.username, admin=True)
         raise HTTPException(status.HTTP_403_FORBIDDEN, "账号已停用，请联系管理员") from None
     except auth_service.InvalidCredentials:
+        await auth_failures.record_login_failure(request, credentials.username, admin=True)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户名或密码错误") from None
     if user.role.value != "admin":
+        await auth_failures.record_login_failure(request, credentials.username, admin=True)
         raise HTTPException(status.HTTP_403_FORBIDDEN, "该账号不是管理员")
+    await auth_failures.clear_login_failures(credentials.username, admin=True)
     return _start_session(response, user, ADMIN_SESSION_COOKIE)
 
 

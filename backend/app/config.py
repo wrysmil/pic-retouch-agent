@@ -87,6 +87,34 @@ class Settings(BaseSettings):
         "api.openai.com,dashscope.aliyuncs.com,api.toookens.com,api.minimax.cn"
     )
 
+    # 限流模式：off | shadow | enforce。上线先 shadow 观察计数，再切 enforce。
+    rate_limit_mode: str = "shadow"
+    rate_limit_key_prefix: str = "rl"
+    # 可选 JSON 覆盖默认策略，例如：{"ai-generate":{"scopes":{"user":5,"ip":20}}}
+    rate_limit_policies: str = ""
+    rate_limit_redis_timeout_seconds: float = 0.25
+    rate_limit_local_buckets: int = 10000
+    # 只有直连 peer 命中这些 IP/CIDR 时才信任 X-Forwarded-For，逗号分隔。
+    trusted_proxy_ips: str = ""
+
+    # 连续登录失败锁定：默认 15 分钟窗口内 5 次。
+    auth_failure_limit: int = 5
+    auth_failure_window_seconds: int = 900
+
+    # 工作台/后台的额外可信 Origin（逗号分隔）；同 Host 请求无需配置。
+    security_allowed_origins: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:5174,http://127.0.0.1:5174"
+    )
+
+    @property
+    def security_allowed_origins_list(self) -> set[str]:
+        return {
+            item.strip().rstrip("/")
+            for item in self.security_allowed_origins.split(",")
+            if item.strip()
+        }
+
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"
@@ -99,7 +127,11 @@ class Settings(BaseSettings):
     def provider_host_allowlist(self) -> set[str]:
         if self.allow_local_provider_hosts:
             return set()
-        return {host.strip().lower() for host in self.allowed_provider_hosts.split(",") if host.strip()}
+        return {
+            host.strip().lower()
+            for host in self.allowed_provider_hosts.split(",")
+            if host.strip()
+        }
 
     @property
     def frontend_dist(self) -> Path:

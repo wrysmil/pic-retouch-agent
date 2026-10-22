@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
 from app.db import SessionDep
@@ -9,6 +9,7 @@ from app.deps import CurrentUser
 from app.routers.quota import quota_http_error
 from app.schemas.batch import BatchIn, BatchOut
 from app.schemas.run import RunOut
+from app.security.rate_limit import rate_limit
 from app.services import batch, quota, runs, tools
 from app.services.batch import EmptyBatch, UnknownBatchAsset
 from app.services.runs import RunNotFound
@@ -20,6 +21,7 @@ router = APIRouter(prefix="/batches", tags=["batches"])
 
 @router.post(
     "",
+    dependencies=[Depends(rate_limit("ai-batch"))],
     status_code=status.HTTP_202_ACCEPTED,
     summary="提交批量处理",
     description="对多张素材执行同一套像素处理链，入队后由 worker 逐项推进并回报进度。",

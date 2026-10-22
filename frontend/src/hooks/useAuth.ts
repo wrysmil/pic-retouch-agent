@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { authApi, type Credentials, type User } from '@/api/auth'
 import { ApiError } from '@/api/client'
+import { recordRateLimit } from '@/stores/rateLimit'
 
 const ME_KEY = ['auth', 'me']
 
@@ -25,10 +26,12 @@ export function useAuthActions() {
   const login = useMutation({
     mutationFn: (body: Credentials) => authApi.login(body),
     onSuccess: cacheUser,
+    onError: (error) => recordRateLimit('login', error),
   })
   const register = useMutation({
     mutationFn: (body: Credentials) => authApi.register(body),
     onSuccess: cacheUser,
+    onError: (error) => recordRateLimit('register', error),
   })
   const logout = useMutation({
     mutationFn: () => authApi.logout(),

@@ -11,10 +11,12 @@ export default function GenerateForm({
   onSubmit,
   pending,
   defaultPrompt = '',
+  rateLimitedSeconds = 0,
 }: {
   onSubmit: (input: GenerateInput) => void
   pending: boolean
   defaultPrompt?: string
+  rateLimitedSeconds?: number
 }) {
   const [prompt, setPrompt] = useState(defaultPrompt)
   const [ratio, setRatio] = useState<Ratio>('1:1')
@@ -25,7 +27,7 @@ export default function GenerateForm({
   const estimate = useEstimate('generate_image', { count })
   const short = estimate.data ? !estimate.data.affordable : false
 
-  const canSubmit = prompt.trim().length > 0 && !pending && !short
+  const canSubmit = prompt.trim().length > 0 && !pending && !short && rateLimitedSeconds === 0
 
   return (
     <form
@@ -83,7 +85,13 @@ export default function GenerateForm({
           disabled={!canSubmit}
           className="bg-ink hover:bg-dark rounded-control ml-auto inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white transition-all duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100"
         >
-          {short ? '次数不足' : pending ? '提交中…' : '生成'}
+          {short
+            ? '次数不足'
+            : rateLimitedSeconds > 0
+              ? `${rateLimitedSeconds} 秒后可重试`
+              : pending
+                ? '提交中…'
+                : '生成'}
           <AiBadge />
         </button>
       </div>

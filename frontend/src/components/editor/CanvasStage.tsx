@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type Konva from 'konva'
 import {
   Circle,
+  Ellipse,
   Group,
   Image as KonvaImage,
   Layer as KonvaLayer,
@@ -20,8 +21,22 @@ import { useSelectStroke } from '@/hooks/useSelectStroke'
 import { useCanvasImage } from '@/hooks/useCanvasImage'
 import { useElementSize } from '@/hooks/useElementSize'
 import { makeAdjustFilter, toAdjustPreview, type AdjustPreview } from '@/lib/adjustPreview'
+import {
+  SNAP_THRESHOLD_PX,
+  layerBounds,
+  snapBounds,
+  snapCandidates,
+  type SnapCandidate,
+  type SnapLine,
+} from '@/lib/snap'
 import { useCanvasView } from '@/stores/canvasView'
-import { useEditorUi, type CanvasSelection, type CropRect, type LayerPreview } from '@/stores/editorUi'
+import {
+  useEditorUi,
+  type CanvasSelection,
+  type CropRect,
+  type Guide,
+  type LayerPreview,
+} from '@/stores/editorUi'
 
 const NO_FILTERS: ((imageData: ImageData) => void)[] = []
 // 预览按屏幕分辨率量级缓存，滤镜每帧重算才跟得上滑杆
@@ -75,8 +90,25 @@ export default function CanvasStage({
   const adjustPreview = useEditorUi((state) => state.adjustPreview)
   const layerPreview = useEditorUi((state) => state.layerPreview)
   const selectMode = useEditorUi((state) => state.selectMode)
+  const activeTool = useEditorUi((state) => state.activeTool)
+  const spacePan = useEditorUi((state) => state.spacePan)
+  const guides = useEditorUi((state) => state.guides)
+  const guidesEnabled = useEditorUi((state) => state.guidesEnabled)
+  const snapEnabled = useEditorUi((state) => state.snapEnabled)
   const selectedLayerId = useEditorUi((state) => state.selectedLayerId)
   const selectLayer = useEditorUi((state) => state.selectLayer)
+  const [snapLines, setSnapLines] = useState<SnapLine[]>([])
+  const updateSnapLines = useCallback((lines: SnapLine[]) => {
+    setSnapLines((current) => {
+      if (current.length === lines.length) {
+        const same = current.every(
+          (line, index) => line.axis === lines[index].axis && line.position === lines[index].position,
+        )
+        if (same) return current
+      }
+      return lines
+    })
+  }, [])
   const shown = useHeldCanvas(document, urls)
   const canvas = shown.document
   const images = shown.urls
@@ -93,7 +125,7 @@ export default function CanvasStage({
   const selecting = Boolean(selectMode)
   // 裁剪、对比、选区三种模式下画布手势另有用途，图层这时不参与交互
   const interactive = !selecting && !cropOpen && !compareOpen
-  const stageDraggable = !cropOpen && !selecting && !holdingStage
+  const stageDraggable = !cropOpen && !compareOpen && !holdingStage && (spacePan || (!selecting && activeTool === 'move'))
 
   const settleOverlay = useCallback(() => {
     stroke.settle()
@@ -170,7 +202,13 @@ export default function CanvasStage({
     <div
       ref={containerRef}
       className={`bg-canvas relative h-full w-full overflow-hidden ${
-        selecting || cropOpen ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'
+        spacePan
+          ? 'cursor-grab active:cursor-grabbing'
+          : selecting || cropOpen
+            ? 'cursor-crosshair'
+            : activeTool === 'move'
+              ? 'cursor-grab active:cursor-grabbing'
+              : 'cursor-default'
       }`}
     >
       <Stage
@@ -182,22 +220,22 @@ export default function CanvasStage({
         scaleY={scale}
         draggable={stageDraggable}
         onMouseDown={(event) => {
-          if (selectMode !== 'brush' || !onStroke) return
+          if (spacePan || selectMode !== 'brush' || !onStroke) return
           const point = canvasPoint(event.target.getStage())
           if (point) stroke.start(point)
         }}
         onMouseMove={(event) => {
-          if (selectMode !== 'brush' || !onStroke) return
+          if (spacePan || selectMode !== 'brush' || !onStroke) return
           const point = canvasPoint(event.target.getStage())
           if (point) stroke.move(point)
         }}
         onMouseUp={() => {
-          if (selectMode !== 'brush' || !onStroke) return
+          if (spacePan || selectMode !== 'brush' || !onStroke) return
           const points = stroke.end()
           if (points.length) onStroke(points)
         }}
         onClick={(event) => {
-          if (selectMode !== 'point' || !onPoint) return
+          if (spacePan || selectMode !== 'point' || !onPoint) return
           const picked = canvasPoint(event.target.getStage())
           if (!picked) return
           point.pick(picked, selection?.markers ?? [])
@@ -250,8 +288,11 @@ export default function CanvasStage({
             urls={images}
             color={color}
             layerPreview={layerPreview}
-            interactive={interactive}
+            interactive={interactive && !spacePan}
             stageDraggable={stageDraggable}
+            guides={guidesEnabled ? guides : []}
+            snapEnabled={snapEnabled}
+            onSnapLines={updateSnapLines}
             viewScale={scale}
             selectedId={selectedLayerId}
             editingId={editingId}
@@ -287,6 +328,14 @@ export default function CanvasStage({
             preview={point.preview}
             markers={point.markers.length ? point.markers : selection?.markers}
             onMaskReady={settleOverlay}
+          />
+        )}
+        {(guidesEnabled || snapLines.length > 0) && (
+          <GuideLines
+            document={canvas}
+            guides={guidesEnabled ? guides : []}
+            lines={snapLines}
+            scale={scale}
           />
         )}
       </Stage>
@@ -334,6 +383,60 @@ function CanvasBoard({ width, height }: { width: number; height: number }) {
   )
 }
 
+function GuideLines({
+  document,
+  guides,
+  lines,
+  scale,
+}: {
+  document: LayerDocument
+  guides: Guide[]
+  lines: SnapLine[]
+  scale: number
+}) {
+  return (
+    <KonvaLayer listening={false}>
+      {guides.map((guide) =>
+        guide.axis === 'x' ? (
+          <Line
+            key={guide.id}
+            points={[guide.position, 0, guide.position, document.height]}
+            stroke="#5f98ad"
+            strokeWidth={1 / scale}
+            dash={[4 / scale, 4 / scale]}
+            opacity={0.7}
+          />
+        ) : (
+          <Line
+            key={guide.id}
+            points={[0, guide.position, document.width, guide.position]}
+            stroke="#5f98ad"
+            strokeWidth={1 / scale}
+            dash={[4 / scale, 4 / scale]}
+            opacity={0.7}
+          />
+        ),
+      )}
+      {lines.map((line, index) =>
+        line.axis === 'x' ? (
+          <Line
+            key={`snap-x-${index}`}
+            points={[line.position, 0, line.position, document.height]}
+            stroke="#d6ff4b"
+            strokeWidth={1.5 / scale}
+          />
+        ) : (
+          <Line
+            key={`snap-y-${index}`}
+            points={[0, line.position, document.width, line.position]}
+            stroke="#d6ff4b"
+            strokeWidth={1.5 / scale}
+          />
+        ),
+      )}
+    </KonvaLayer>
+  )
+}
 function CanvasGhost({
   frame,
   opacity,
@@ -415,6 +518,9 @@ function DocumentLayer({
   interactive = false,
   stageDraggable = false,
   viewScale = 1,
+  guides = [],
+  snapEnabled = true,
+  onSnapLines,
   selectedId = null,
   editingId = null,
   onSelect,
@@ -431,6 +537,9 @@ function DocumentLayer({
   interactive?: boolean
   stageDraggable?: boolean
   viewScale?: number
+  guides?: Guide[]
+  snapEnabled?: boolean
+  onSnapLines?: (lines: SnapLine[]) => void
   selectedId?: string | null
   editingId?: string | null
   onSelect?: (id: string) => void
@@ -487,6 +596,12 @@ function DocumentLayer({
             onEdit={onEdit}
             onHoldStage={onHoldStage}
             onRegister={register}
+            snap={{
+              candidates: snapCandidates(document, layer.id, guides),
+              thresholdCanvas: SNAP_THRESHOLD_PX / viewScale,
+              enabled: snapEnabled,
+              onLines: onSnapLines,
+            }}
           />
         ) : layer.kind === 'image' ? (
           <ImageLayer
@@ -503,6 +618,32 @@ function DocumentLayer({
             onMove={onMove}
             onHoldStage={onHoldStage}
             onRegister={register}
+            snap={{
+              candidates: snapCandidates(document, layer.id, guides),
+              thresholdCanvas: SNAP_THRESHOLD_PX / viewScale,
+              enabled: snapEnabled,
+              onLines: onSnapLines,
+            }}
+          />
+        ) : layer.kind === 'shape' ? (
+          <ShapeLayer
+            key={layer.id}
+            layer={layer}
+            preview={layerPreview?.id === layer.id ? layerPreview : null}
+            pinned={pinned?.id === layer.id ? pinned : null}
+            interactive={interactive}
+            stageDraggable={stageDraggable}
+            selected={selectedId === layer.id}
+            onSelect={onSelect}
+            onMove={onMove}
+            onHoldStage={onHoldStage}
+            onRegister={register}
+            snap={{
+              candidates: snapCandidates(document, layer.id, guides),
+              thresholdCanvas: SNAP_THRESHOLD_PX / viewScale,
+              enabled: snapEnabled,
+              onLines: onSnapLines,
+            }}
           />
         ) : null,
       )}
@@ -524,6 +665,12 @@ function DocumentLayer({
 }
 
 /** 拖角写入服务端期间钉住的缩放与位置，两者必须成对，否则画面会错位。 */
+type SnapContext = {
+  candidates: SnapCandidate[]
+  thresholdCanvas: number
+  enabled: boolean
+  onLines?: (lines: SnapLine[]) => void
+}
 type Pinned = { id: string; scale: number; x: number; y: number }
 
 function transformStamp(layer: Layer) {
@@ -573,6 +720,7 @@ function useLayerInteract(
   onSelect?: (id: string) => void,
   onMove?: (layerId: string, x: number, y: number) => void,
   onHoldStage?: (held: boolean) => void,
+  snap?: SnapContext,
 ) {
   const [drop, setDrop] = useState<Drop | null>(null)
   const dragged = useRef(false)
@@ -629,10 +777,30 @@ function useLayerInteract(
       },
       onDragMove: (event: Konva.KonvaEventObject<DragEvent>) => {
         event.cancelBubble = true
+        const centerX = event.target.x()
+        const centerY = event.target.y()
+        const next = { x: centerX - layer.width / 2, y: centerY - layer.height / 2 }
+        if (snap?.enabled && !event.evt.altKey) {
+          const result = snapBounds(
+            layerBounds(layer, next.x, next.y),
+            snap.candidates,
+            snap.thresholdCanvas,
+          )
+          if (result.deltaX || result.deltaY) {
+            event.target.position({
+              x: centerX + result.deltaX,
+              y: centerY + result.deltaY,
+            })
+          }
+          snap.onLines?.(result.lines)
+        } else {
+          snap?.onLines?.([])
+        }
       },
       onDragEnd: (event: Konva.KonvaEventObject<DragEvent>) => {
         event.cancelBubble = true
         restoreStage(event.target)
+        snap?.onLines?.([])
         onHoldStage?.(false)
         const next = {
           x: event.target.x() - layer.width / 2,
@@ -662,6 +830,7 @@ function TextLayer({
   onEdit,
   onHoldStage,
   onRegister,
+  snap,
 }: {
   layer: Layer
   preview: LayerPreview | null
@@ -675,6 +844,7 @@ function TextLayer({
   onEdit?: (id: string) => void
   onHoldStage?: (held: boolean) => void
   onRegister?: (id: string, node: Konva.Node | null) => void
+  snap?: SnapContext
 }) {
   const drag = useLayerInteract(
     layer,
@@ -683,6 +853,7 @@ function TextLayer({
     onSelect,
     onMove,
     onHoldStage,
+    snap,
   )
   const { setRef } = useLayerNode(layer.id, onRegister)
   const { transform } = layer
@@ -798,6 +969,7 @@ function ImageLayer({
   onMove,
   onHoldStage,
   onRegister,
+  snap,
 }: {
   layer: Layer
   url: string | undefined
@@ -811,10 +983,11 @@ function ImageLayer({
   onMove?: (layerId: string, x: number, y: number) => void
   onHoldStage?: (held: boolean) => void
   onRegister?: (id: string, node: Konva.Node | null) => void
+  snap?: SnapContext
 }) {
   const image = useCanvasImage(url)
   const { nodeRef, setRef } = useLayerNode(layer.id, onRegister)
-  const drag = useLayerInteract(layer, interactive, stageDraggable, onSelect, onMove, onHoldStage)
+  const drag = useLayerInteract(layer, interactive, stageDraggable, onSelect, onMove, onHoldStage, snap)
   const filtered = color !== null && image?.safe === true
   // 数值不变时保持数组同一引用，平移缩放才不会白白重算滤镜
   const filters = useMemo(
@@ -859,6 +1032,67 @@ function ImageLayer({
   )
 }
 
+function ShapeLayer({
+  layer,
+  preview,
+  pinned = null,
+  interactive = false,
+  stageDraggable = false,
+  selected = false,
+  onSelect,
+  onMove,
+  onHoldStage,
+  onRegister,
+  snap,
+}: {
+  layer: Layer
+  preview: LayerPreview | null
+  pinned?: Pinned | null
+  interactive?: boolean
+  stageDraggable?: boolean
+  selected?: boolean
+  onSelect?: (id: string) => void
+  onMove?: (layerId: string, x: number, y: number) => void
+  onHoldStage?: (held: boolean) => void
+  onRegister?: (id: string, node: Konva.Node | null) => void
+  snap?: SnapContext
+}) {
+  const { setRef } = useLayerNode(layer.id, onRegister)
+  const drag = useLayerInteract(
+    layer,
+    interactive,
+    stageDraggable,
+    onSelect,
+    onMove,
+    onHoldStage,
+    snap,
+  )
+  const point = layerPoint(layer, preview, drag.drop, pinned)
+  const sized = layerScale(layer, preview, pinned)
+  const common = {
+    ref: setRef,
+    x: point.x,
+    y: point.y,
+    offsetX: layer.width / 2,
+    offsetY: layer.height / 2,
+    scaleX: sized.x,
+    scaleY: sized.y,
+    rotation: preview?.rotation ?? layer.transform.rotation,
+    opacity: preview?.opacity ?? layer.opacity,
+    fill: layer.fill,
+    stroke: selected && interactive ? SELECTED_STROKE : layer.stroke,
+    strokeWidth: selected && interactive ? 2 : layer.stroke_width,
+    strokeScaleEnabled: false,
+    ...drag.handlers,
+  }
+  if (layer.shape_type === 'ellipse') {
+    return <Ellipse {...common} radiusX={layer.width / 2} radiusY={layer.height / 2} />
+  }
+  if (layer.shape_type === 'line') {
+    return <Line {...common} points={[0, 0, layer.width, layer.height]} fillEnabled={false} />
+  }
+  return <Rect {...common} width={layer.width} height={layer.height} />
+}
 /** 选中图层的四角缩放手柄，锚点尺寸按视图倍率反向补偿，屏幕上手感恒定。 */
 function LayerScaler({
   node,

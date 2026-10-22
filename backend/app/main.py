@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +22,8 @@ from app.routers import (
     runs,
     sessions,
 )
+from app.security.http import SecurityMiddleware, validate_security_config
+from app.security.rate_limit import RateLimited, RateLimitUnavailable, close_redis, read_rate_limit
 from app.validation import localize_validation_errors
 
 settings = get_settings()
@@ -30,8 +32,10 @@ settings = get_settings()
 # FastAPI 利用这个，把"你的启动逻辑"和"你的关闭逻辑"拆到了暂停点的两边
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    validate_security_config(settings)
     await asyncio.to_thread(storage.ensure_bucket)
     yield
+    await close_redis()
     await close_queue()
 
 
@@ -41,6 +45,17 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
+app.add_middleware(SecurityMiddleware)
+
+
+@app.exception_handler(RateLimited)
+async def rate_limited_handler(_: Request, exc: RateLimited) -> JSONResponse:
+    return JSONResponse(status_code=429, content=exc.content(), headers=exc.headers)
+
+
+@app.exception_handler(RateLimitUnavailable)
+async def rate_limit_unavailable_handler(_: Request, exc: RateLimitUnavailable) -> JSONResponse:
+    return JSONResponse(status_code=503, content=exc.content(), headers=exc.headers)
 
 
 @app.exception_handler(RequestValidationError)
@@ -50,7 +65,8 @@ async def validation_exception_handler(_, exc: RequestValidationError) -> JSONRe
         content={"detail": localize_validation_errors(exc.errors())},
     )
 
-api = APIRouter(prefix="/api")
+
+api = APIRouter(prefix="/api", dependencies=[Depends(read_rate_limit)])
 api.include_router(auth.router)
 api.include_router(assets.router)
 api.include_router(health.router)

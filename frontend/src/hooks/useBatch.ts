@@ -6,6 +6,7 @@ import { isTerminal } from '@/api/runs'
 import { errorMessage } from '@/hooks/useAuth'
 import { useRun } from '@/hooks/useRun'
 import { toast } from '@/stores/toasts'
+import { recordRateLimit } from '@/stores/rateLimit'
 
 const LIST_KEY = ['batches']
 const batchKey = (id: string) => ['batch', id]
@@ -42,7 +43,10 @@ export function useCreateBatch() {
       void queryClient.invalidateQueries({ queryKey: ['quota', 'entitlements'] })
       queryClient.setQueryData(batchKey(run.id), undefined)
     },
-    onError: (error) => toast(errorMessage(error), 'danger'),
+    onError: (error) => {
+      recordRateLimit('batch', error)
+      toast(errorMessage(error), 'danger')
+    },
   })
 }
 

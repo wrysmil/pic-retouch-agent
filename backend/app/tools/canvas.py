@@ -8,6 +8,7 @@ from app.edits.document import (
     crop,
     flip,
     move,
+    remove,
     reorder,
     rotate,
     scale,
@@ -21,7 +22,6 @@ from app.ratios import Ratio
 from app.tools.base import LayerRef, ToolSpec
 from app.tools.context import ToolError, document_of, require_session
 
-
 # 画布工具类
 
 _LAYER = "layer_id"
@@ -29,6 +29,12 @@ _LAYER = "layer_id"
 _PLACEMENT = ("x", "y")
 # 多步计划里两次翻转要能分辨先横后竖
 _FLIP_LABELS = {"horizontal": "水平翻转", "vertical": "垂直翻转"}
+
+
+class DeleteIn(LayerRef):
+    """删除必须点名图层；不允许沿用「不填就删最上层」的默认语义。"""
+
+    layer_id: str = Field(description="要删除的图层 id 或名字")
 
 
 class FlipIn(LayerRef):
@@ -143,7 +149,8 @@ async def _apply(session: AsyncSession, run: ToolRun, mutate) -> dict:
     # require_session 用 run.session_id 查 edit_sessions 表，返回一条 EditSession 记录。
     # 这条记录里的 document 字段（edit_session.py:32）就是当前画布长什么样——只有一份!!!，最新的。
     record = await require_session(session, run)
-    # 以上是读画布状态，record 拿到手的是一条数据库记录，里面装着一堆字段（title、revision、history_seq、document……）
+    # 以上是读画布状态，record 拿到手的是一条数据库记录，
+    # 里面装着一堆字段（title、revision、history_seq、document……）
     try:
         '''
 run.params                        ①  {"layer_id": None, "factor": 2.0, ...}
@@ -175,6 +182,16 @@ async def set_layer_opacity(session: AsyncSession, run: ToolRun) -> dict:
         session,
         run,
         lambda doc, params: set_opacity(doc, params.get(_LAYER), params["opacity"]),
+    )
+
+
+async def delete_layer(session: AsyncSession, run: ToolRun) -> dict:
+    """从画布移除一个未锁定图层，素材文件不在此处删除。"""
+
+    return await _apply(
+        session,
+        run,
+        lambda doc, params: remove(doc, params[_LAYER]),
     )
 
 
@@ -324,6 +341,14 @@ SET_LAYER_OPACITY = _canvas(
     OpacityIn,
     set_layer_opacity,
 )
+DELETE_LAYER = _canvas(
+    "delete_layer",
+    "删除图层",
+    "从画布删除一个未锁定图层；不会删除素材文件，可撤销。",
+    DeleteIn,
+    delete_layer,
+)
+
 SET_LAYER_VISIBLE = _canvas(
     "set_layer_visible",
     "显隐",
