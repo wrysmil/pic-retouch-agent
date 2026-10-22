@@ -18,7 +18,7 @@ export default function GenerateForm({
 }) {
   const [prompt, setPrompt] = useState(defaultPrompt)
   const [ratio, setRatio] = useState<Ratio>('1:1')
-  const [count, setCount] = useState(4)
+  const [count, setCount] = useState(1)
   const [negative, setNegative] = useState('')
   const [advanced, setAdvanced] = useState(false)
   const entitlements = useEntitlements()
