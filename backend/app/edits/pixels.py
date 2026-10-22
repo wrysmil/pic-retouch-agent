@@ -1,9 +1,12 @@
 import io
 import math
+import threading
 
 from PIL import Image, ImageChops, ImageEnhance, ImageFilter
 
 _CORNER_TOLERANCE = 28
+_U2NET_SESSION = None
+_U2NET_LOCK = threading.Lock()
 
 
 def remove_background(data: bytes) -> bytes:
@@ -18,8 +21,20 @@ def remove_background(data: bytes) -> bytes:
             if provider == "rembg":
                 raise
         else:
-            return bytes(remove(data))
+            return bytes(remove(data, session=_u2net_session()))
     return _corner_matte(data)
+
+
+def _u2net_session():
+    # 显式用 u2net：新版 rembg 默认 bria-rmbg（峰值 3.4GB）会撑爆 4G 小机器，
+    # u2net 峰值约 600MB。单例缓存避免每个抠图任务重复加载模型
+    global _U2NET_SESSION
+    with _U2NET_LOCK:
+        if _U2NET_SESSION is None:
+            from rembg.session_factory import new_session
+
+            _U2NET_SESSION = new_session("u2net")
+        return _U2NET_SESSION
 
 
 def adjust(
