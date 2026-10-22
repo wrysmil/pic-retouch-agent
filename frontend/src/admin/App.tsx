@@ -11,7 +11,8 @@ import RequireAdmin from './RequireAdmin'
 /** 后台独立应用：自己的端口、自己的入口页、自己的登录页，与工作台互不共享路由。 */
 export default function AdminApp() {
   return (
-    <BrowserRouter>
+    // BASE_URL 构建期为 /admin/，去掉尾斜杠否则精确路径 /admin 匹配不上 basename，整页拒绝渲染
+    <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
       <Routes>
         <Route path="/login" element={<AdminLoginPage />} />
 

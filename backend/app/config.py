@@ -137,6 +137,10 @@ class Settings(BaseSettings):
     def frontend_dist(self) -> Path:
         return ROOT_DIR / "frontend" / "dist"
 
+    @property
+    def admin_frontend_dist(self) -> Path:
+        return ROOT_DIR / "frontend" / "dist-admin"
+
 
 @lru_cache
 def get_settings() -> Settings:

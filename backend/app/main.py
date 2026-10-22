@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import storage
@@ -82,5 +82,20 @@ app.include_router(api)
 app.include_router(events.router)
 
 # 生产环境下前端与 API 同源，静态产物由本服务托管；开发环境走 Vite dev proxy。
+# 管理后台托管在 /admin 前缀下（vite build --config vite.admin.config.ts 产物，
+# base=/admin/）；未命中文件的路径回退到 SPA 入口，刷新 /admin/users 等深链不 404。
+admin_dist = settings.admin_frontend_dist
+if admin_dist.is_dir():
+    admin_root = admin_dist.resolve()
+
+    def _admin_page(rest: str) -> FileResponse:
+        candidate = (admin_root / rest).resolve()
+        if candidate.is_file() and candidate.is_relative_to(admin_root):
+            return FileResponse(candidate)
+        return FileResponse(admin_root / "index.html")
+
+    app.get("/admin/{rest:path}", include_in_schema=False)(_admin_page)
+    app.get("/admin", include_in_schema=False)(lambda: _admin_page(""))
+
 if settings.frontend_dist.is_dir():
     app.mount("/", StaticFiles(directory=settings.frontend_dist, html=True), name="frontend")
