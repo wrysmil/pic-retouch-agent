@@ -35,9 +35,8 @@ def fake_planner(monkeypatch):
         async def fake_get_planner(session, version_id):
             return _FakeClient(fake)
 
+        # plan_turn/respond 内部局部导入 model_runtime.get_planner，覆盖模块属性即可生效
         monkeypatch.setattr(model_runtime_mod, "get_planner", fake_get_planner)
-        # agent.respond 在模块级 from import 了 get_planner；直接覆盖 agent_service 命名空间里的引用
-        monkeypatch.setattr(agent_service, "get_planner", fake_get_planner)
         return fake
 
     return install
@@ -188,6 +187,44 @@ async def test_illegal_params_are_refused(signed_in: httpx.AsyncClient, fake_pla
 
     assert turn["steps"] == []
     assert "执行不了" in turn["reply"]
+
+
+async def test_tool_call_without_prompt_uses_the_instruction(
+    signed_in: httpx.AsyncClient, fake_planner
+):
+    """模型漏填 prompt 时不该整轮作废：用户原话本身就是改图描述。"""
+
+    fake_planner(tool_call("replace_region", {"layer_id": "subject"}))
+    session_id = (await open_session(signed_in))["id"]
+
+    turn = await send(signed_in, session_id, "头发换成黑色")
+
+    assert turn["status"] == "running"
+    run = (await signed_in.get(f"/api/runs/{turn['steps'][0]['run_id']}")).json()
+    assert run["prompt"] == "头发换成黑色"
+
+
+def test_missing_prompt_is_filled_from_the_instruction():
+    from app.agent.plan import validate
+
+    steps = validate(
+        [{"tool": "replace_region", "params": {"layer_id": "hair"}}],
+        goal="头发换成黑色",
+    )
+
+    assert steps[0]["params"]["layer_id"] == "hair"
+    assert steps[0]["params"]["prompt"] == "头发换成黑色"
+
+
+def test_explicit_prompt_wins_over_the_instruction():
+    from app.agent.plan import validate
+
+    steps = validate(
+        [{"tool": "replace_region", "params": {"prompt": "染成深棕色"}}],
+        goal="把头发换个颜色",
+    )
+
+    assert steps[0]["params"]["prompt"] == "染成深棕色"
 
 
 async def test_results_join_the_wall_without_switching_current(
@@ -485,6 +522,96 @@ async def test_async_turn_returns_immediately_then_plans(
         assert planned["status"] == "succeeded"
         assert [step["tool"] for step in planned["steps"]] == ["flip_layer"]
         assert planned["plan_draft"] == []
+    finally:
+        settings.agent_async_planning = original
+
+
+async def test_async_planning_fills_the_missing_prompt(
+    signed_in: httpx.AsyncClient, fake_planner
+):
+    """线上走 plan_turn 的流式规划，同样要按用户原话补齐 prompt。"""
+    from app.config import get_settings
+    from app.db import SessionFactory
+
+    settings = get_settings()
+    original = settings.agent_async_planning
+    settings.agent_async_planning = True
+    try:
+        fake_planner(tool_call("replace_region", {"layer_id": "subject"}))
+        session_id = (await open_session(signed_in))["id"]
+
+        response = await signed_in.post(
+            f"/api/sessions/{session_id}/messages",
+            json={"text": "头发换成黑色", "request_id": "req-prompt-1"},
+        )
+        assert response.status_code == 202
+        turn = response.json()
+
+        async with SessionFactory() as session:
+            await agent_service.plan_turn(session, uuid.UUID(turn["id"]))
+
+        planned = (
+            await signed_in.get(f"/api/sessions/{session_id}/messages/{turn['id']}")
+        ).json()
+        assert planned["status"] == "running"
+        run = (await signed_in.get(f"/api/runs/{planned['steps'][0]['run_id']}")).json()
+        assert run["prompt"] == "头发换成黑色"
+    finally:
+        settings.agent_async_planning = original
+
+
+async def test_retry_replans_a_turn_that_failed_while_planning(
+    signed_in: httpx.AsyncClient, fake_planner
+):
+    """规划失败时没有步骤可重试：「重新整理方案」要在原轮次上重新规划。"""
+    from app.config import get_settings
+    from app.db import SessionFactory
+
+    settings = get_settings()
+    original = settings.agent_async_planning
+    settings.agent_async_planning = True
+    try:
+        fake_planner(tool_call("teleport_subject", {}))
+        session_id = (await open_session(signed_in))["id"]
+
+        response = await signed_in.post(
+            f"/api/sessions/{session_id}/messages",
+            json={"text": "水平翻转", "request_id": "req-replan-1"},
+        )
+        assert response.status_code == 202
+        turn = response.json()
+
+        async with SessionFactory() as session:
+            await agent_service.plan_turn(session, uuid.UUID(turn["id"]))
+
+        failed = (
+            await signed_in.get(f"/api/sessions/{session_id}/messages/{turn['id']}")
+        ).json()
+        assert failed["phase"] == "failed"
+        assert failed["steps"] == []
+
+        fake_planner(tool_call("flip_layer", {"direction": "horizontal"}))
+        retried = (
+            await signed_in.post(f"/api/sessions/{session_id}/messages/{turn['id']}/retry")
+        ).json()
+        assert retried["id"] == turn["id"]
+        assert retried["phase"] == "planning"
+
+        async with SessionFactory() as session:
+            await agent_service.plan_turn(session, uuid.UUID(turn["id"]))
+
+        planned = (
+            await signed_in.get(f"/api/sessions/{session_id}/messages/{turn['id']}")
+        ).json()
+        assert planned["phase"] == "completed"
+        assert [step["tool"] for step in planned["steps"]] == ["flip_layer"]
+        layer = (await signed_in.get(f"/api/sessions/{session_id}")).json()["document"][
+            "layers"
+        ][0]
+        assert layer["transform"]["scale_x"] == -1
+
+        turns = (await signed_in.get(f"/api/sessions/{session_id}/messages")).json()
+        assert len(turns) == 1
     finally:
         settings.agent_async_planning = original
 

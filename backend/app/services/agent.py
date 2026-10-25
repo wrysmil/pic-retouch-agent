@@ -229,7 +229,7 @@ async def plan_turn(session: AsyncSession, turn_id: uuid.UUID) -> AgentRun | Non
         resumed = await _resume_checkpoint(turn)
         if resumed is not None:
             reply, raw = resumed
-            steps = plan_mod.validate(raw)
+            steps = plan_mod.validate(raw, goal=turn.goal)
             steps = await _pin_selection(session, record, steps)
             return await _finish_planning(session, turn, reply, steps)
 
@@ -284,12 +284,13 @@ async def plan_turn(session: AsyncSession, turn_id: uuid.UUID) -> AgentRun | Non
         if turn.phase != AgentPhase.PLANNING:
             return turn
 
-        steps = plan_mod.validate(raw)
+        steps = plan_mod.validate(raw, goal=turn.goal)
         await _save_checkpoint(turn, context, steps, reply)
         steps = await _pin_selection(session, record, steps)
     except agent.PlannerUnavailable as exc:
         return await _fail_planning(session, turn, str(exc))
     except (UnknownTool, tools.InvalidParams, plan_mod.PlanError) as exc:
+        logger.warning("规划校验失败 turn_id=%s plan=%r：%s", turn_id, raw, exc)
         return await _fail_planning(session, turn, f"这一步暂时执行不了：{exc}")
     except Exception:
         logger.exception("指令规划异常 turn_id=%s", turn_id)
@@ -556,13 +557,18 @@ async def cancel(session: AsyncSession, record: EditSession, turn_id: uuid.UUID)
 
 
 async def retry(session: AsyncSession, record: EditSession, turn_id: uuid.UUID) -> AgentRun:
-    """只重跑最后一个失败步骤，前面的成果不浪费。"""
+    """只重跑最后一个失败步骤，前面的成果不浪费。
+
+    规划阶段就失败时没有步骤可重试，改走重新整理：保留用户原话，重新规划同一轮。
+    """
 
     turn = await _get(session, record, turn_id)
     steps = _copy(turn.plan)
     failed = next((step for step in reversed(steps) if step["status"] == plan_mod.FAILED), None)
     if failed is None:
-        raise CannotRetry
+        if not turn.error:
+            raise CannotRetry
+        return await _replan(session, turn)
     failed["run_id"] = None
     failed["status"] = plan_mod.PENDING
     # 换一个尝试号：重试是新的执行，旧任务的迟到回调不能算到新预占上
@@ -574,6 +580,37 @@ async def retry(session: AsyncSession, record: EditSession, turn_id: uuid.UUID) 
     _touch(turn)
     await session.commit()
     return await _advance(session, turn)
+
+
+async def _replan(session: AsyncSession, turn: AgentRun) -> AgentRun:
+    """规划失败的轮次放回 planning，用同一句原话再整理一次。
+
+    不新建轮次：新建会让用户那句话在对话里出现两次，也丢掉原来的位置。
+    """
+
+    turn.plan = []
+    turn.plan_draft = []
+    turn.reply = ""
+    turn.error = None
+    turn.status = RunStatus.QUEUED
+    turn.phase = AgentPhase.PLANNING
+    turn.public_summary = "正在安排…"
+    turn.planning_attempt = (turn.planning_attempt or 1) + 1
+    # 换新线程：旧 checkpoint 里可能还留着导致失败的那份计划
+    turn.checkpoint_thread_id = f"turn:{turn.id}:{turn.planning_attempt}"
+    turn.planning_lease_until = None
+    _touch(turn)
+
+    await session.commit()
+    await session.refresh(turn)
+    await turn_events.emit(
+        session, turn, "planning.started", {"at": datetime.now(UTC).isoformat()}
+    )
+    try:
+        await enqueue(PLAN_TASK, turn.id)
+    except Exception:  # pragma: no cover - 队列故障不丢轮次，交恢复扫描/刷新重投
+        logger.exception("规划任务投递失败 turn_id=%s", turn.id)
+    return turn
 
 
 async def continue_plan(session: AsyncSession, run: ToolRun) -> None:

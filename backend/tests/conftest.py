@@ -272,7 +272,7 @@ def credentials() -> dict[str, str]:
 
 @pytest.fixture
 def other_credentials() -> dict[str, str]:
-    return {"username": f"{TEST_USER_PREFIX}other-{uuid.uuid4().hex[:8]}", "password": "secret123"}
+    return {"username": f"{TEST_USER_PREFIX}other_{uuid.uuid4().hex[:8]}", "password": "secret123"}
 
 
 @pytest.fixture

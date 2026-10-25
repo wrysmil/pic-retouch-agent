@@ -24,7 +24,7 @@ _SYSTEM = """你是电商图片修图助手，通过调用工具完成用户的�
   直接调用，不要再让用户重选，也不要猜测选区是否点准。没有选区也能调用，
   此时作用在整个目标图层。
 - 一句话要改多个图层时，按图层拆成多步，每步只填一个 layer_id。
-- 改颜色、换材质、换成某物用 replace_region 并点名 layer_id；
+- 改颜色、换材质、换成某物用 replace_region 并点名 layer_id，prompt 写清要改成什么样；
   只改整张背景才用 replace_background。adjust_image 只做明暗冷暖，不做改色。
 - 翻转画面用 flip_layer；说了角度用 rotate_layer。
 - 用户要求拆层、把物体独立成层时，使用 split_layers 或 promote_object_to_layer。
@@ -97,7 +97,7 @@ def _verify(state: AgentState) -> AgentState:
     """
 
     try:
-        return {"plan": validate(state["plan"])}
+        return {"plan": validate(state["plan"], goal=state.get("goal"))}
     except (UnknownTool, tool_service.InvalidParams, PlanError) as exc:
         return {"plan": [], "reply": f"这一步暂时执行不了：{exc}"}
 

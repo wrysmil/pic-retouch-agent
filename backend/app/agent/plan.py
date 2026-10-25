@@ -5,7 +5,7 @@
 """
 
 from app.services import tools as tool_service
-from app.tools import spec_of
+from app.tools import ToolSpec, spec_of
 
 MAX_STEPS = 8
 
@@ -63,14 +63,30 @@ def assemble(raw: list[dict]) -> list[dict]:
     return steps
 
 
-def validate(raw: list[dict]) -> list[dict]:
-    """逐步按工具入参模型校验，再补全成可执行结构。"""
+def validate(raw: list[dict], *, goal: str | None = None) -> list[dict]:
+    """逐步按工具入参模型校验，再补全成可执行结构。
+
+    goal 是用户原话。规划模型偶尔漏填 prompt（用户这句话本身就是改图描述），
+    这类必填项可以按原话补齐，不必让整轮作废。
+    """
     checked: list[dict] = []
+    text = (goal or "").strip()
     for step in raw:
         spec = spec_of(step["tool"])
-        params = tool_service.validate(spec.name, step.get("params") or {})
+        params = _with_instruction(spec, step.get("params") or {}, text)
+        params = tool_service.validate(spec.name, params)
         checked.append({**step, "tool": spec.name, "params": params})
     return assemble(checked)
+
+
+def _with_instruction(spec: ToolSpec, params: dict, text: str) -> dict:
+    """prompt 必填但模型没给（或给了空串）时，用用户原话补上。"""
+    field = spec.params.model_fields.get("prompt")
+    if not text or field is None or not field.is_required():
+        return params
+    if str(params.get("prompt") or "").strip():
+        return params
+    return {**params, "prompt": text}
 
 
 def ready(steps: list[dict]) -> list[dict]:
